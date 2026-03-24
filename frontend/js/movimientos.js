@@ -14,8 +14,6 @@ var CLIENTES_PAGO_FIJOS = [
 var CLIENTES_SIN_PRECIO = CLIENTES_PAGO_FIJOS.slice();
 var PRODUCTOS_DESCARGA = ['Grasa', 'Huesos'];
 var CLIENTES_DESCARGA = ['NICO', 'MARCOS', 'REFINERIA'];
-var CACHE_PRODUCTOS_CLIENTE = Object.create(null);
-var PROMESAS_PRODUCTOS_CLIENTE = Object.create(null);
 var ICONO_CERRAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
 
 function normalizarTexto(valor) {
@@ -170,31 +168,13 @@ function obtenerProductosPorClienteApi(cliente) {
   var cli = normalizarTexto(cliente);
   if (!cli) return Promise.resolve([]);
 
-  if (Object.prototype.hasOwnProperty.call(CACHE_PRODUCTOS_CLIENTE, cli)) {
-    return Promise.resolve(CACHE_PRODUCTOS_CLIENTE[cli].slice());
+  if (typeof window.obtenerProductosPorClienteLocal === 'function') {
+    return Promise.resolve(
+      normalizarProductosRespuesta(window.obtenerProductosPorClienteLocal(cli))
+    );
   }
 
-  if (PROMESAS_PRODUCTOS_CLIENTE[cli]) {
-    return PROMESAS_PRODUCTOS_CLIENTE[cli].then(function(lista) {
-      return lista.slice();
-    });
-  }
-
-  PROMESAS_PRODUCTOS_CLIENTE[cli] = api('obtenerProductosPorCliente', { cliente: cli })
-    .then(function(respuesta) {
-      var productos = normalizarProductosRespuesta(respuesta);
-      CACHE_PRODUCTOS_CLIENTE[cli] = productos;
-      delete PROMESAS_PRODUCTOS_CLIENTE[cli];
-      return productos.slice();
-    })
-    .catch(function() {
-      delete PROMESAS_PRODUCTOS_CLIENTE[cli];
-      return [];
-    });
-
-  return PROMESAS_PRODUCTOS_CLIENTE[cli].then(function(lista) {
-    return lista.slice();
-  });
+  return Promise.resolve([]);
 }
 
 function obtenerOpcionesProductoPorCard(card) {
@@ -319,6 +299,7 @@ function agregarProductoCompra(n, productoInicial, kgInicial) {
   var container = card.querySelector('.compra-productos');
   if (!container) {
     console.error('Contenedor .compra-productos no encontrado en la tarjeta', n);
+    showToast('No se pudo agregar el producto', 'error');
     return;
   }
 
@@ -629,6 +610,7 @@ function agregarProducto() {
   var contenedor = document.getElementById('productos');
   if (!contenedor) {
     console.error("Contenedor #productos no encontrado al agregar movimiento");
+    showToast('No se pudo inicializar la lista de movimientos', 'error');
     return null;
   }
 
@@ -720,9 +702,12 @@ function calcular(card, calcId) {
 
   var pedidosPrecio = items.map(function(item) {
     if (clienteEspecial || !cliente || !item.producto) return Promise.resolve({ precio: 0 });
+    var precio = 0;
+    if (typeof window.obtenerPrecioLocal === 'function') {
+      precio = window.obtenerPrecioLocal(cliente, item.producto, fecha);
+    }
 
-    return api('obtenerPrecio', { cliente: cliente, producto: item.producto, fecha: fecha })
-      .catch(function() { return { precio: 0 }; });
+    return Promise.resolve({ precio: precio });
   });
 
   Promise.all(pedidosPrecio)
@@ -946,14 +931,6 @@ function construirPayloadMovimientosDesdeFormulario() {
         return;
       }
 
-      var fechaPartesDesc = fecha.split('-');
-      var fechaDateDesc = new Date(Number(fechaPartesDesc[0]), Number(fechaPartesDesc[1]) - 1, Number(fechaPartesDesc[2]));
-      var diaDesc = fechaDateDesc.getDay();
-      if (diaDesc === 0 || diaDesc === 6) {
-        error = 'No se pueden registrar descargas en fin de semana';
-        return;
-      }
-
       var clienteDesc;
       if (productoDesc === 'Huesos') {
         clienteDesc = 'REFINERIA';
@@ -1072,12 +1049,56 @@ function construirPayloadMovimientosDesdeFormulario() {
   };
 }
 
+function parseFechaLocalISO(fechaISO) {
+  var raw = String(fechaISO || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+
+  var partes = raw.split('-');
+  var y = Number(partes[0]);
+  var m = Number(partes[1]);
+  var d = Number(partes[2]);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+
+  return new Date(y, m - 1, d);
+}
+
+function esCompraTipo(tipo) {
+  return String(tipo || '').trim().toLowerCase() === 'compra';
+}
+
+function payloadTieneCompra(payload) {
+  var lista = payload && Array.isArray(payload.productos) ? payload.productos : [];
+  return lista.some(function(item) {
+    return esCompraTipo(item && item.tipo);
+  });
+}
+
+function esFinDeSemanaFechaISO(fechaISO) {
+  var date = parseFechaLocalISO(fechaISO);
+  if (!date) return false;
+
+  var dia = date.getDay();
+  return dia === 0 || dia === 6;
+}
+
+function validarCompraFueraDeFinDeSemana(payload) {
+  if (!payloadTieneCompra(payload)) return true;
+  if (!esFinDeSemanaFechaISO(payload && payload.fecha)) return true;
+
+  showToast('No se pueden registrar compras en fin de semana', 'error');
+  return false;
+}
+
 function guardar() {
   var payload;
   try {
     payload = construirPayloadMovimientosDesdeFormulario();
   } catch (err) {
-    toast(err && err.message ? err.message : 'Datos invalidos', 'err');
+    showToast(err && err.message ? err.message : 'Datos invalidos', 'error');
+    return;
+  }
+
+  if (!validarCompraFueraDeFinDeSemana(payload)) {
     return;
   }
 
@@ -1092,15 +1113,17 @@ function guardar() {
   })
     .then(function(respuesta) {
       if (respuesta && respuesta.error) {
-        toast(respuesta.error, 'err');
+        showToast('Error al guardar datos', 'error');
         return;
       }
 
-      toast('Guardado');
-      location.reload();
+      showToast('Movimiento guardado', 'success');
+      setTimeout(function() {
+        location.reload();
+      }, 350);
     })
     .catch(function(err) {
-      toast(err && err.message ? err.message : 'Error al guardar', 'err');
+      showToast('Error al guardar datos', 'error');
     });
 }
 
@@ -1147,7 +1170,7 @@ function eliminarProducto(n) {
 }
 
 function registrarPagoCliente() {
-  toast("Usa el tipo 'Pago a cliente' dentro de cada movimiento", 'err');
+  showToast("Usa el tipo 'Pago a cliente' dentro de cada movimiento", 'error');
 }
 
 window.agregarProducto = agregarProducto;

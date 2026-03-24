@@ -60,76 +60,43 @@ function csGetTrigger(cfg) {
   return wrap.querySelector('.cs-trigger');
 }
 
-function csNeedsPortal(cfg) {
+function csSetDropdownOpenState(cfg, abierto) {
+  if (!cfg) return;
+
   var wrap = csGetWrap(cfg);
-  if (!wrap) return false;
+  var open = !!abierto;
 
-  var node = wrap.parentElement;
-  while (node && node !== document.body) {
-    var styles = window.getComputedStyle(node);
-    var overflow = (styles.overflow + styles.overflowY + styles.overflowX).toLowerCase();
-    var hasStackingContext = styles.transform !== 'none'
-      || styles.filter !== 'none'
-      || styles.perspective !== 'none';
-
-    if (/(auto|scroll|hidden|clip)/.test(overflow) || hasStackingContext) {
-      return true;
-    }
-
-    node = node.parentElement;
+  if (wrap) {
+    wrap.classList.toggle('dropdown-open', open);
   }
 
-  return false;
-}
-
-function csSendPanelHome(cfg) {
-  var wrap = csGetWrap(cfg);
-  var panel = csGetPanel(cfg);
-  if (!panel) return;
-
-  panel.classList.remove('cs-floating');
-  if (wrap && panel.parentElement !== wrap) {
-    wrap.appendChild(panel);
-  }
-}
-
-function csSendPanelToBody(cfg) {
-  var panel = csGetPanel(cfg);
-  if (!panel) return;
-
-  if (panel.parentElement !== document.body) {
-    document.body.appendChild(panel);
-  }
-  panel.classList.add('cs-floating');
+  var selectors = ['.compra-item', '.prod-card', '.card', '.modal-card'];
+  selectors.forEach(function(sel) {
+    var host = wrap && typeof wrap.closest === 'function' ? wrap.closest(sel) : null;
+    if (!host) return;
+    host.classList.toggle('dropdown-open', open);
+  });
 }
 
 function csPositionPanel(cfg) {
   if (!cfg || !cfg.isOpen) return;
 
   var wrap = csGetWrap(cfg);
-  var trigger = csGetTrigger(cfg);
   var panel = csGetPanel(cfg);
   if (!panel) return;
 
-  if (!wrap || !document.body.contains(wrap) || !trigger) {
+  if (!wrap || !document.body.contains(wrap)) {
     csCloseCustom(cfg.id);
     return;
   }
 
-  if (!cfg.usePortal) {
-    csSendPanelHome(cfg);
-    panel.style.top = '';
-    panel.style.left = '';
-    panel.style.width = '';
-    return;
+  if (panel.parentElement !== wrap) {
+    wrap.appendChild(panel);
   }
-
-  csSendPanelToBody(cfg);
-
-  var rect = trigger.getBoundingClientRect();
-  panel.style.top = Math.round(rect.bottom + 6) + 'px';
-  panel.style.left = Math.round(rect.left) + 'px';
-  panel.style.width = Math.round(rect.width) + 'px';
+  panel.classList.remove('cs-floating');
+  panel.style.top = '';
+  panel.style.left = '';
+  panel.style.width = '';
 }
 
 function csRepositionOpenCustoms() {
@@ -197,9 +164,6 @@ function csBindGlobalHooks() {
     if (evt.key !== 'Escape') return;
     csCloseAllCustom();
   });
-
-  window.addEventListener('resize', csScheduleReposition);
-  window.addEventListener('scroll', csScheduleReposition, true);
 }
 
 function csInitCustom(id, config) {
@@ -222,8 +186,7 @@ function csInitCustom(id, config) {
     onChange: cfg.onChange || null,
     valueClass: String(cfg.valueClass || ''),
     value: cfg.selected == null ? '' : String(cfg.selected),
-    isOpen: false,
-    usePortal: false
+    isOpen: false
   };
 
   csBindGlobalHooks();
@@ -340,8 +303,8 @@ function csToggleCustom(id) {
   csCloseAllCustom(cfg.id);
 
   cfg.isOpen = true;
-  cfg.usePortal = csNeedsPortal(cfg);
   wrap.classList.add('open');
+  csSetDropdownOpenState(cfg, true);
 
   var inp = document.getElementById(cfg.searchId);
   if (inp) inp.value = '';
@@ -365,6 +328,7 @@ function csCloseCustom(id) {
 
   var wrap = csGetWrap(cfg);
   if (wrap) wrap.classList.remove('open');
+  csSetDropdownOpenState(cfg, false);
 
   var panel = csGetPanel(cfg);
   if (panel) {
@@ -373,14 +337,10 @@ function csCloseCustom(id) {
     panel.style.left = '';
     panel.style.width = '';
 
-    if (wrap) {
-      if (panel.parentElement !== wrap) wrap.appendChild(panel);
-    } else if (panel.parentElement === document.body) {
-      panel.remove();
+    if (wrap && panel.parentElement !== wrap) {
+      wrap.appendChild(panel);
     }
   }
-
-  cfg.usePortal = false;
 }
 
 function csBlurCustom(id) {

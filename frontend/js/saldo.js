@@ -3,6 +3,7 @@ var MOVIMIENTOS_SELECCIONADOS = Object.create(null);
 var MODAL_ACTIVO = null;
 var MODAL_ESC_HOOK_LISTO = false;
 var ACCIONES_MOV_LISTO = false;
+var MODO_SELECCION_MOVS = false;
 var MODAL_ON_CLOSE = null;
 var SALDO_FETCH_SEQ = 0;
 var MOVIMIENTOS_FETCH_SEQ = 0;
@@ -43,6 +44,22 @@ function renderLoadingMovimientos() {
   ].join('');
 }
 
+function registrarLoadersSeccionesSaldo() {
+  if (typeof registerSectionLoader !== 'function') return;
+
+  registerSectionLoader('saldo', {
+    show: function() { setSaldoLoading(true); },
+    hide: function() { setSaldoLoading(false); }
+  });
+
+  registerSectionLoader('movimientos', {
+    show: function() { renderLoadingMovimientos(); },
+    hide: function() {}
+  });
+}
+
+registrarLoadersSeccionesSaldo();
+
 function limpiarCacheMovimientosDia() {
   MOVIMIENTOS_DIA_CACHE = [];
   MOVIMIENTOS_SELECCIONADOS = Object.create(null);
@@ -51,7 +68,8 @@ function limpiarCacheMovimientosDia() {
 function cargarSaldo(opts) {
   var options = opts || {};
   var reqId = ++SALDO_FETCH_SEQ;
-  setSaldoLoading(true);
+  if (typeof showSectionLoader === 'function') showSectionLoader('saldo');
+  else setSaldoLoading(true);
   var payload = {};
   if (options.forzar) payload._ts = Date.now();
 
@@ -69,9 +87,11 @@ function cargarSaldo(opts) {
 
     console.error("Error cargarSaldo:", err);
     document.getElementById('saldo').textContent = '0';
+    showToast('No se pudo actualizar el saldo', 'error');
   }).finally(function() {
     if (reqId !== SALDO_FETCH_SEQ) return;
-    setSaldoLoading(false);
+    if (typeof hideSectionLoader === 'function') hideSectionLoader('saldo');
+    else setSaldoLoading(false);
   });
 }
 
@@ -303,18 +323,54 @@ function obtenerIdsSeleccionados() {
   });
 }
 
+function limpiarSeleccionMovimientos() {
+  MOVIMIENTOS_SELECCIONADOS = Object.create(null);
+}
+
+function refrescarListaMovimientosActual() {
+  if (MOVIMIENTOS_DIA_CACHE.length) {
+    renderMovimientosDia(MOVIMIENTOS_DIA_CACHE);
+    return;
+  }
+  renderVacioMovimientos();
+}
+
+function setModoSeleccionMovimientos(activo) {
+  MODO_SELECCION_MOVS = !!activo;
+  if (!MODO_SELECCION_MOVS) {
+    limpiarSeleccionMovimientos();
+  }
+  refrescarListaMovimientosActual();
+}
+
+function toggleModoSeleccionMovimientos() {
+  setModoSeleccionMovimientos(!MODO_SELECCION_MOVS);
+}
+
 function actualizarAccionesSeleccion() {
   var wrap = document.getElementById('movBulkActions');
+  var btnModo = document.getElementById('btnModoSeleccion');
+  var btnEditarFecha = document.getElementById('btnEditarFechaSeleccionados');
   var btn = document.getElementById('btnEliminarSeleccionados');
-  if (!wrap || !btn) return;
+  if (!wrap || !btn || !btnModo || !btnEditarFecha) return;
+
+  wrap.style.display = 'flex';
+
+  btnModo.textContent = MODO_SELECCION_MOVS ? 'Cancelar' : 'Seleccionar';
+  btnModo.classList.toggle('btn-danger-outline', MODO_SELECCION_MOVS);
 
   var ids = obtenerIdsSeleccionados();
-  if (!ids.length) {
-    wrap.style.display = 'none';
+  if (!MODO_SELECCION_MOVS || !ids.length) {
+    btnEditarFecha.style.display = 'none';
+    btn.style.display = 'none';
     return;
   }
 
-  wrap.style.display = 'block';
+  btnEditarFecha.style.display = 'inline-flex';
+  btnEditarFecha.textContent = ids.length === 1
+    ? 'Editar fecha'
+    : ('Editar fecha (' + ids.length + ')');
+  btn.style.display = 'inline-flex';
   btn.textContent = ids.length === 1
     ? 'Eliminar seleccionado'
     : ('Eliminar ' + ids.length + ' seleccionados');
@@ -384,6 +440,7 @@ function renderMovimientosDia(payload) {
     var ingreso = !neutro && esIngresoMovimiento(mov, montoRaw);
     var tono = neutro ? 'neutro' : (ingreso ? 'ingreso' : 'egreso');
     var hasId = !!mov.id;
+    var isSelected = hasId && !!MOVIMIENTOS_SELECCIONADOS[mov.id];
 
     if (!neutro) {
       if (ingreso) ingresosCalc += monto;
@@ -393,32 +450,31 @@ function renderMovimientosDia(payload) {
     var title = escapeHtml(mov.tipo || 'Movimiento');
     var detail = escapeHtml(detalleMovimiento(mov));
     var detailHTML = detail ? ('<div class="mov-detail">' + detail + '</div>') : '';
-    var checked = hasId && MOVIMIENTOS_SELECCIONADOS[mov.id] ? 'checked' : '';
-    var disabledCheck = hasId ? '' : 'disabled';
     var labelTipo = neutro ? 'Neutro' : (ingreso ? 'Ingreso' : 'Egreso');
     var iconoTipo = neutro ? '&#8722;' : (ingreso ? '&#8599;' : '&#8595;');
-    var montoHTML = neutro
-      ? ''
-      : ('<div class="mov-monto ' + tono + '">' + (ingreso ? '+' : '-') + ' $ ' + formatearNumeroMov(monto) + '</div>');
+    var montoTxt = neutro ? '$ 0' : ((ingreso ? '+' : '-') + ' $ ' + formatearNumeroMov(monto));
+    var selectionClass = isSelected ? ' is-selected' : '';
+    var modeClass = MODO_SELECCION_MOVS ? ' selection-mode' : '';
+    var clickableClass = hasId ? '' : ' no-id';
+    var selectedFlag = (MODO_SELECCION_MOVS && isSelected)
+      ? '<span class="mov-selected-flag">Seleccionado</span>'
+      : '';
 
     html += `
-      <div class="mov-item es-${tono}">
-        <label class="mov-check-wrap">
-          <input type="checkbox" class="mov-check" data-id="${escapeHtml(mov.id)}" ${checked} ${disabledCheck}>
-        </label>
+      <div class="mov-item es-${tono}${selectionClass}${modeClass}${clickableClass}" data-id="${escapeHtml(mov.id)}">
+        <div class="mov-top">
+          <div class="mov-monto ${tono}">${montoTxt}</div>
+          ${selectedFlag}
+          ${htmlAccionesMovimiento(mov)}
+        </div>
 
-        <div class="mov-left">
+        <div class="mov-main">
           <div class="mov-dot dot-${tono}">${iconoTipo}</div>
           <div class="mov-body">
             <div class="mov-title">${title}</div>
             ${detailHTML}
             <span class="mov-badge ${tono}">${labelTipo}</span>
           </div>
-        </div>
-
-        <div class="mov-right">
-          ${montoHTML}
-          ${htmlAccionesMovimiento(mov)}
         </div>
       </div>
     `;
@@ -445,17 +501,27 @@ function bindEventosListaMovimientos() {
   var listEl = document.getElementById('movList');
   if (!listEl) return;
 
-  listEl.querySelectorAll('.mov-check').forEach(function(chk) {
-    chk.addEventListener('change', function() {
-      var id = String(chk.dataset.id || '').trim();
+  listEl.querySelectorAll('.mov-item').forEach(function(item) {
+    item.addEventListener('click', function() {
+      var id = String(item.dataset.id || '').trim();
       if (!id) return;
-      MOVIMIENTOS_SELECCIONADOS[id] = !!chk.checked;
-      actualizarAccionesSeleccion();
+
+      if (MODO_SELECCION_MOVS) {
+        if (MOVIMIENTOS_SELECCIONADOS[id]) delete MOVIMIENTOS_SELECCIONADOS[id];
+        else MOVIMIENTOS_SELECCIONADOS[id] = true;
+
+        refrescarListaMovimientosActual();
+        return;
+      }
+
+      abrirModalEditarMovimiento(id);
     });
   });
 
   listEl.querySelectorAll('[data-mov-action]').forEach(function(btn) {
-    btn.addEventListener('click', function() {
+    btn.addEventListener('click', function(evt) {
+      evt.stopPropagation();
+
       var id = String(btn.dataset.id || '').trim();
       var action = String(btn.dataset.movAction || '').trim();
       if (!id || !action) return;
@@ -507,6 +573,13 @@ function inicializarAccionesMovimientos() {
   if (ACCIONES_MOV_LISTO) return;
   ACCIONES_MOV_LISTO = true;
 
+  var btnModoSel = document.getElementById('btnModoSeleccion');
+  if (btnModoSel) {
+    btnModoSel.addEventListener('click', function() {
+      toggleModoSeleccionMovimientos();
+    });
+  }
+
   var btnEliminarSel = document.getElementById('btnEliminarSeleccionados');
   if (btnEliminarSel) {
     btnEliminarSel.addEventListener('click', function() {
@@ -515,6 +588,17 @@ function inicializarAccionesMovimientos() {
       confirmarEliminarMovimientos(ids);
     });
   }
+
+  var btnEditarFechaSel = document.getElementById('btnEditarFechaSeleccionados');
+  if (btnEditarFechaSel) {
+    btnEditarFechaSel.addEventListener('click', function() {
+      var ids = obtenerIdsSeleccionados();
+      if (!ids.length) return;
+      abrirModalEditarFechaSeleccionados(ids);
+    });
+  }
+
+  actualizarAccionesSeleccion();
 }
 
 function cargarMovimientosDia(opts) {
@@ -528,9 +612,8 @@ function cargarMovimientosDia(opts) {
   }
 
   var fecha = document.getElementById('fechaSaldo').value || hoyArgentinaISO();
-  var bulk = document.getElementById('movBulkActions');
-  if (bulk) bulk.style.display = 'none';
-  renderLoadingMovimientos();
+  if (typeof showSectionLoader === 'function') showSectionLoader('movimientos');
+  else renderLoadingMovimientos();
 
   return obtenerMovimientosDia(fecha, options)
     .then(function(respuesta) {
@@ -559,14 +642,11 @@ function cargarVistaSaldo() {
     return RECARGA_VISTA_SALDO_PROMESA;
   }
 
-  mostrarLoading('Actualizando saldo...');
-
   RECARGA_VISTA_SALDO_PROMESA = Promise.all([
     cargarSaldo({ forzar: true }),
     cargarMovimientosDia({ forzar: true, resetCache: true })
   ]).finally(function() {
     RECARGA_VISTA_SALDO_PROMESA = null;
-    ocultarLoading();
   });
 
   return RECARGA_VISTA_SALDO_PROMESA;
@@ -593,6 +673,7 @@ function cerrarModalActual() {
         onClose();
       } catch (e) {
         console.error('Error al cerrar modal:', e);
+        showToast('No se pudo cerrar el modal', 'error');
       }
     }
   }, 160);
@@ -620,20 +701,25 @@ function abrirModal(config) {
   var card = document.createElement('div');
   card.className = 'modal-card' + (config && config.cardClass ? (' ' + config.cardClass) : '');
 
+  var header = document.createElement('div');
+  header.className = 'modal-header';
+
+  var title = document.createElement('h2');
+  title.className = 'modal-title';
+  title.textContent = String(config && config.title || '');
+  header.appendChild(title);
+
   var btnCerrar = document.createElement('button');
   btnCerrar.type = 'button';
-  btnCerrar.className = 'btn-cerrar';
+  btnCerrar.className = 'btn-cerrar close-btn';
   btnCerrar.setAttribute('aria-label', 'Cerrar');
-  btnCerrar.textContent = '✕';
+  btnCerrar.textContent = '×';
   btnCerrar.addEventListener('click', function() {
     cerrarModalActual();
   });
-  card.appendChild(btnCerrar);
+  header.appendChild(btnCerrar);
 
-  var title = document.createElement('h3');
-  title.className = 'modal-title';
-  title.textContent = String(config && config.title || '');
-  card.appendChild(title);
+  card.appendChild(header);
 
   var body = document.createElement('div');
   body.className = 'modal-body';
@@ -744,11 +830,11 @@ function confirmarEliminarMovimientos(ids) {
       })
         .then(function() {
           cerrarModalActual();
-          toast(unicos.length === 1 ? 'Movimiento eliminado' : 'Movimientos eliminados');
+          showToast(unicos.length === 1 ? 'Movimiento eliminado' : 'Movimientos eliminados', 'success');
         })
         .catch(function(err) {
           btnCancelar.disabled = false;
-          toast(err && err.message ? err.message : 'No se pudo eliminar', 'err');
+          showToast(err && err.message ? err.message : 'No se pudo eliminar', 'error');
         });
     }
   });
@@ -772,6 +858,364 @@ function ejecutarEliminarMovimientos(ids) {
       cargarMovimientosDia(),
       cargarSaldo()
     ]);
+  });
+}
+
+function normalizarIdsMovimientos(ids) {
+  return Array.from(new Set(
+    (ids || []).map(function(id) { return String(id || '').trim(); }).filter(Boolean)
+  ));
+}
+
+function parseFechaIsoLocalSaldo(fechaISO) {
+  var raw = String(fechaISO || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+
+  var partes = raw.split('-');
+  var y = Number(partes[0]);
+  var m = Number(partes[1]);
+  var d = Number(partes[2]);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+
+  var date = new Date(y, m - 1, d);
+  if (
+    date.getFullYear() !== y
+    || date.getMonth() !== (m - 1)
+    || date.getDate() !== d
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function esFinDeSemanaFechaIsoSaldo(fechaISO) {
+  if (typeof esFinDeSemanaFechaISO === 'function') {
+    return !!esFinDeSemanaFechaISO(fechaISO);
+  }
+
+  var date = parseFechaIsoLocalSaldo(fechaISO);
+  if (!date) return false;
+
+  var dia = date.getDay();
+  return dia === 0 || dia === 6;
+}
+
+function obtenerMovimientosPorIds(ids) {
+  var unicos = normalizarIdsMovimientos(ids);
+  var encontrados = [];
+  var faltantes = [];
+
+  unicos.forEach(function(id) {
+    var mov = obtenerMovimientoPorId(id);
+    if (!mov) {
+      faltantes.push(id);
+      return;
+    }
+    encontrados.push(mov);
+  });
+
+  if (faltantes.length) {
+    throw new Error('No se encontraron algunos movimientos seleccionados');
+  }
+
+  return encontrados;
+}
+
+function construirDataEdicionFechaCompra(mov, nuevaFecha) {
+  var cliente = String(mov && mov.cliente || '').trim();
+  if (!cliente) {
+    throw new Error('Una compra no tiene cliente');
+  }
+
+  var productos = obtenerProductosCompraDesdeMovimiento(mov).map(function(item) {
+    return {
+      producto: String(item && item.producto || '').trim(),
+      kg: toNumber(item && item.kg)
+    };
+  }).filter(function(item) {
+    return !!item.producto && item.kg > 0;
+  });
+
+  if (!productos.length) {
+    throw new Error('Una compra no tiene productos validos');
+  }
+
+  var monto = Math.abs(toNumber(mov && mov.monto));
+
+  return {
+    fecha: nuevaFecha,
+    productos: [{
+      tipo: 'Compra',
+      cliente: cliente,
+      detalle: String(mov && mov.detalle || '').trim(),
+      monto: monto,
+      montoTotal: monto,
+      productos: productos,
+      datos: { productos: productos }
+    }]
+  };
+}
+
+function construirDataEdicionFechaDescarga(mov, nuevaFecha) {
+  var cliente = String(mov && mov.cliente || '').trim();
+  if (!cliente) {
+    throw new Error('Una descarga no tiene cliente');
+  }
+
+  var datos = mov && mov.datos && typeof mov.datos === 'object' ? mov.datos : null;
+  var producto = String(
+    (mov && mov.producto) || (datos && datos.producto) || ''
+  ).trim();
+  var kg = toNumber(
+    (mov && mov.kg) || (datos && datos.kg)
+  );
+
+  if (!producto || !(kg > 0)) {
+    throw new Error('Una descarga no tiene producto o kg validos');
+  }
+
+  return {
+    fecha: nuevaFecha,
+    productos: [{
+      tipo: 'Descarga',
+      cliente: cliente,
+      detalle: String(mov && mov.detalle || '').trim(),
+      producto: producto,
+      kg: kg,
+      datos: {
+        producto: producto,
+        kg: kg
+      }
+    }]
+  };
+}
+
+function construirDataEdicionFechaPagoCliente(mov, nuevaFecha) {
+  var cliente = String(mov && mov.cliente || '').trim();
+  var monto = Math.abs(toNumber(mov && mov.monto));
+
+  if (!cliente) throw new Error('Un pago a cliente no tiene cliente');
+  if (!(monto > 0)) throw new Error('Un pago a cliente no tiene monto valido');
+
+  return {
+    fecha: nuevaFecha,
+    productos: [{
+      tipo: 'Pago a cliente',
+      cliente: cliente,
+      detalle: String(mov && mov.detalle || '').trim(),
+      monto: monto
+    }]
+  };
+}
+
+function construirDataEdicionFechaEntrega(mov, nuevaFecha) {
+  var monto = Math.abs(toNumber(mov && mov.monto));
+  if (!(monto > 0)) throw new Error('Una entrega no tiene monto valido');
+
+  return {
+    fecha: nuevaFecha,
+    tipo: 'Entrega de dinero',
+    cliente: String(mov && mov.cliente || '').trim(),
+    detalle: String(mov && mov.detalle || 'Entrega de dinero').trim(),
+    monto: monto
+  };
+}
+
+function construirDataEdicionFechaGasto(mov, nuevaFecha) {
+  var empleados = obtenerEmpleadosGastoDesdeMovimiento(mov);
+  var monto = Math.abs(toNumber(mov && mov.monto));
+  if (!(monto > 0) && empleados.length) {
+    monto = empleados.reduce(function(acc, item) {
+      return acc + Math.abs(toNumber(item && item.monto));
+    }, 0);
+  }
+  if (!(monto > 0)) throw new Error('Un gasto no tiene monto valido');
+
+  var detalle = String(mov && mov.detalle || '').trim();
+  if (!detalle) detalle = 'Gasto';
+
+  return {
+    fecha: nuevaFecha,
+    tipo: 'Gasto',
+    detalle: detalle,
+    monto: monto,
+    empleados: empleados,
+    datos: empleados.length ? { empleados: empleados } : {}
+  };
+}
+
+function construirDataEdicionFechaMovimiento(mov, nuevaFecha) {
+  var tipo = normalizarTipoMovimiento(mov && mov.tipo);
+
+  if (tipo === 'compra') {
+    return construirDataEdicionFechaCompra(mov, nuevaFecha);
+  }
+  if (tipo === 'descarga') {
+    return construirDataEdicionFechaDescarga(mov, nuevaFecha);
+  }
+  if (tipo === 'pago a cliente') {
+    return construirDataEdicionFechaPagoCliente(mov, nuevaFecha);
+  }
+  if (tipo === 'gasto') {
+    return construirDataEdicionFechaGasto(mov, nuevaFecha);
+  }
+  if (esTipoEntregaDineroMov(tipo)) {
+    return construirDataEdicionFechaEntrega(mov, nuevaFecha);
+  }
+
+  throw new Error('Hay movimientos seleccionados que no se pueden editar');
+}
+
+function prepararTrabajosEdicionFecha(ids, nuevaFecha) {
+  var fecha = String(nuevaFecha || '').trim();
+  if (!parseFechaIsoLocalSaldo(fecha)) {
+    throw new Error('Debes indicar una fecha valida');
+  }
+
+  var movimientos = obtenerMovimientosPorIds(ids);
+  if (!movimientos.length) {
+    throw new Error('No hay movimientos seleccionados');
+  }
+
+  var hayCompra = movimientos.some(function(mov) {
+    return normalizarTipoMovimiento(mov && mov.tipo) === 'compra';
+  });
+  if (hayCompra && esFinDeSemanaFechaIsoSaldo(fecha)) {
+    throw new Error('No se pueden registrar compras en fin de semana');
+  }
+
+  return movimientos.map(function(mov) {
+    return {
+      id: mov.id,
+      data: construirDataEdicionFechaMovimiento(mov, fecha)
+    };
+  });
+}
+
+function ejecutarTrabajosEdicionFecha(trabajos) {
+  var lista = Array.isArray(trabajos) ? trabajos.slice() : [];
+  if (!lista.length) return Promise.resolve(0);
+
+  var procesados = 0;
+  var chain = Promise.resolve();
+
+  lista.forEach(function(job) {
+    chain = chain.then(function() {
+      return fetchConAuth({
+        accion: 'editarMovimiento',
+        id: job.id,
+        data: job.data
+      }).then(function() {
+        procesados += 1;
+      });
+    });
+  });
+
+  return chain.then(function() { return procesados; });
+}
+
+function abrirModalEditarFechaSeleccionados(ids) {
+  var idsSeleccionados = normalizarIdsMovimientos(ids);
+  if (!idsSeleccionados.length) return;
+
+  abrirModal({
+    title: idsSeleccionados.length === 1
+      ? 'Editar fecha del movimiento'
+      : 'Editar fecha de seleccionados',
+    cardClass: 'modal-card-mini',
+    buildBody: function(body) {
+      var txt = document.createElement('p');
+      txt.className = 'modal-text';
+      txt.textContent = idsSeleccionados.length === 1
+        ? 'Selecciona la nueva fecha para el movimiento.'
+        : ('Selecciona la nueva fecha para ' + idsSeleccionados.length + ' movimientos.');
+      body.appendChild(txt);
+
+      var form = document.createElement('div');
+      form.className = 'modal-form';
+
+      var field = document.createElement('div');
+      field.className = 'field';
+
+      var label = document.createElement('label');
+      label.textContent = 'Nueva fecha';
+
+      var fechaInput = document.createElement('input');
+      fechaInput.type = 'date';
+      fechaInput.value = document.getElementById('fechaSaldo').value || hoyArgentinaISO();
+      fechaInput.required = true;
+
+      field.appendChild(label);
+      field.appendChild(fechaInput);
+      form.appendChild(field);
+      body.appendChild(form);
+
+      var actions = document.createElement('div');
+      actions.className = 'modal-actions';
+
+      var btnCancelar = document.createElement('button');
+      btnCancelar.type = 'button';
+      btnCancelar.className = 'btn btn-outline';
+      btnCancelar.textContent = 'Cancelar';
+      btnCancelar.addEventListener('click', function() {
+        cerrarModalActual();
+      });
+
+      var btnGuardar = document.createElement('button');
+      btnGuardar.type = 'button';
+      btnGuardar.className = 'btn btn-green';
+      btnGuardar.innerHTML = '<div class="spin"></div><span class="lbl">Guardar</span>';
+      btnGuardar.addEventListener('click', function(evt) {
+        evt.preventDefault();
+
+        var trabajos;
+        try {
+          trabajos = prepararTrabajosEdicionFecha(idsSeleccionados, fechaInput.value);
+        } catch (err) {
+          showToast(err && err.message ? err.message : 'Datos invalidos', 'error');
+          return;
+        }
+
+        btnCancelar.disabled = true;
+
+        ejecutarConLoading(function() {
+          return ejecutarTrabajosEdicionFecha(trabajos)
+            .then(function(total) {
+              MODO_SELECCION_MOVS = false;
+              limpiarSeleccionMovimientos();
+
+              return Promise.all([
+                cargarMovimientosDia({ forzar: true, resetCache: true }),
+                cargarSaldo({ forzar: true })
+              ]).then(function() {
+                return total;
+              });
+            });
+        }, {
+          boton: btnGuardar,
+          textoBoton: 'Guardando...',
+          sectionId: 'movimientos',
+          textoGlobal: 'Actualizando fecha de movimientos...'
+        })
+          .then(function(total) {
+            cerrarModalActual();
+            showToast('Fecha actualizada en ' + total + ' movimientos', 'success');
+          })
+          .catch(function(err) {
+            btnCancelar.disabled = false;
+            showToast(err && err.message ? err.message : 'Error al guardar datos', 'error');
+          });
+      });
+
+      actions.appendChild(btnCancelar);
+      actions.appendChild(btnGuardar);
+      body.appendChild(actions);
+
+      setTimeout(function() {
+        if (fechaInput && typeof fechaInput.focus === 'function') fechaInput.focus();
+      }, 40);
+    }
   });
 }
 
@@ -887,7 +1331,7 @@ function abrirModalConSeccionClonada(config) {
       try {
         config.onBuild(clone, modal.body);
       } catch (err) {
-        toast(err && err.message ? err.message : 'No se pudo abrir el editor', 'err');
+        showToast(err && err.message ? err.message : 'No se pudo abrir el editor', 'error');
         cerrarModalActual();
       }
     }, 0);
@@ -1078,7 +1522,7 @@ function abrirModalEditarConFormularioMovimientos(mov) {
         try {
           payload = construirPayloadMovimientoDesdeFormularioEdicion(root);
         } catch (err) {
-          toast(err && err.message ? err.message : 'Datos invalidos', 'err');
+          showToast(err && err.message ? err.message : 'Datos invalidos', 'error');
           return;
         }
 
@@ -1101,10 +1545,10 @@ function abrirModalEditarConFormularioMovimientos(mov) {
           textoGlobal: 'Guardando cambios del movimiento...'
         })
           .then(function() {
-            toast('Movimiento actualizado');
+            showToast('Movimiento actualizado', 'success');
           })
-          .catch(function(err) {
-            toast(err && err.message ? err.message : 'No se pudo editar el movimiento', 'err');
+          .catch(function() {
+            showToast('Error al guardar datos', 'error');
           });
       });
     }
@@ -1188,7 +1632,7 @@ function abrirModalEditarConFormularioEntrega(mov) {
         try {
           dataEdicion = construirDataEdicionEntregaDesdeFormulario(root, mov);
         } catch (err) {
-          toast(err && err.message ? err.message : 'Datos invalidos', 'err');
+          showToast(err && err.message ? err.message : 'Datos invalidos', 'error');
           return;
         }
 
@@ -1211,10 +1655,10 @@ function abrirModalEditarConFormularioEntrega(mov) {
           textoGlobal: 'Guardando cambios de la entrega...'
         })
           .then(function() {
-            toast('Entrega actualizada');
+            showToast('Entrega actualizada', 'success');
           })
-          .catch(function(err) {
-            toast(err && err.message ? err.message : 'No se pudo editar la entrega', 'err');
+          .catch(function() {
+            showToast('Error al guardar datos', 'error');
           });
       });
     }
@@ -1333,7 +1777,7 @@ function abrirModalEditarConFormularioGastos(mov) {
         try {
           dataEdicion = construirDataEdicionGastoDesdeFormulario();
         } catch (err) {
-          toast(err && err.message ? err.message : 'Datos invalidos', 'err');
+          showToast(err && err.message ? err.message : 'Datos invalidos', 'error');
           return;
         }
 
@@ -1356,10 +1800,10 @@ function abrirModalEditarConFormularioGastos(mov) {
           textoGlobal: 'Guardando cambios del gasto...'
         })
           .then(function() {
-            toast('Gasto actualizado');
+            showToast('Gasto actualizado', 'success');
           })
-          .catch(function(err) {
-            toast(err && err.message ? err.message : 'No se pudo editar el gasto', 'err');
+          .catch(function() {
+            showToast('Error al guardar datos', 'error');
           });
       });
     }
@@ -1369,12 +1813,12 @@ function abrirModalEditarConFormularioGastos(mov) {
 function abrirModalEditarMovimiento(id) {
   var mov = obtenerMovimientoPorId(id);
   if (!mov) {
-    toast('Movimiento no encontrado', 'err');
+    showToast('Movimiento no encontrado', 'error');
     return;
   }
 
   if (!puedeEditarMovimiento(mov)) {
-    toast('Este movimiento no se puede editar', 'err');
+    showToast('Este movimiento no se puede editar', 'error');
     return;
   }
 
@@ -1393,7 +1837,7 @@ function abrirModalEditarMovimiento(id) {
 
     abrirModalEditarConFormularioMovimientos(mov);
   } catch (err) {
-    toast(err && err.message ? err.message : 'No se pudo abrir el editor', 'err');
+    showToast(err && err.message ? err.message : 'No se pudo abrir el editor', 'error');
   }
 }
 function registrarEntrega() {
@@ -1415,10 +1859,10 @@ function registrarEntrega() {
     textoGlobal: 'Registrando entrega...'
   })
     .then(function() {
-      toast("Entrega registrada");
+      showToast("Entrega registrada", 'success');
     })
-    .catch(function(err) {
-      toast(err && err.message ? err.message : 'No se pudo registrar la entrega', 'err');
+    .catch(function() {
+      showToast('Error al guardar datos', 'error');
     });
 }
 

@@ -14,12 +14,6 @@
 
 <div class="toast-zone" id="toastZone"></div>
 <div id="modalRoot"></div>
-<div class="loading-overlay" id="loadingOverlay" aria-hidden="true">
-  <div class="loading-overlay-card" role="status" aria-live="polite">
-    <div class="spinner" aria-hidden="true"></div>
-    <span id="loadingOverlayText">Procesando...</span>
-  </div>
-</div>
 
 <!-- AUTH GATE -->
 <section id="authGate" class="auth-gate" style="display:none">
@@ -200,7 +194,13 @@
 
       <div class="card">
         <p class="card-label">Movimientos del dia</p>
-        <div class="mov-bulk-actions" id="movBulkActions" style="display:none">
+        <div class="mov-bulk-actions" id="movBulkActions">
+          <button type="button" class="btn btn-outline" id="btnModoSeleccion">
+            Seleccionar
+          </button>
+          <button type="button" class="btn btn-outline" id="btnEditarFechaSeleccionados">
+            Editar fecha
+          </button>
           <button type="button" class="btn btn-outline btn-danger-outline" id="btnEliminarSeleccionados">
             Eliminar seleccionados
           </button>

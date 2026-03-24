@@ -159,3 +159,75 @@ function obtenerPrecio(cliente, producto, fecha) {
 
   return 0;
 }
+
+function serializarHistorialPrecios(historial) {
+  const lista = Array.isArray(historial) ? historial : [];
+
+  return lista.map(function(item) {
+    const precio = parsePrecio(item && item.precio);
+    if (precio === null) return null;
+
+    let fechaIso = "";
+    try {
+      fechaIso = Utilities.formatDate(parseFecha(item && item.fecha), TZ_AR, "yyyy-MM-dd");
+    } catch (e) {
+      return null;
+    }
+
+    return {
+      fecha: fechaIso,
+      precio: precio
+    };
+  }).filter(function(item) {
+    return !!item;
+  }).sort(function(a, b) {
+    if (a.fecha < b.fecha) return -1;
+    if (a.fecha > b.fecha) return 1;
+    return 0;
+  });
+}
+
+function getInitialData(fecha) {
+  const fechaBase = normalizarClaveFechaPrecios(fecha || hoyArgentinaISO());
+  const datosPrecios = obtenerDatosPrecios(fechaBase);
+  const clientes = Object.keys(datosPrecios).filter(function(cliente) {
+    return !CLIENTES_NO_MOSTRAR_SELECTOR.includes(cliente);
+  });
+
+  const productosSet = Object.create(null);
+  const precios = Object.create(null);
+
+  Object.keys(datosPrecios).forEach(function(cliente) {
+    const productosCliente = datosPrecios[cliente];
+    if (!productosCliente || typeof productosCliente !== "object") return;
+
+    const productos = Object.keys(productosCliente);
+    if (!productos.length) return;
+
+    const salidaProductos = Object.create(null);
+
+    productos.forEach(function(producto) {
+      const historial = serializarHistorialPrecios(productosCliente[producto]);
+      if (!historial.length) return;
+
+      salidaProductos[producto] = historial;
+
+      const tienePrecio = historial.some(function(item) {
+        return Number(item && item.precio) > 0;
+      });
+      if (tienePrecio) productosSet[producto] = true;
+    });
+
+    if (Object.keys(salidaProductos).length) {
+      precios[cliente] = salidaProductos;
+    }
+  });
+
+  return {
+    clientes: clientes,
+    productos: Object.keys(productosSet),
+    precios: precios,
+    clientesEspeciales: obtenerClientesEspeciales(),
+    fecha: fechaBase
+  };
+}

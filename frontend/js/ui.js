@@ -1,8 +1,9 @@
 var _appInicializada = false;
+var _appInicializando = false;
 
 function inicializarApp() {
-  if (_appInicializada) return;
-  _appInicializada = true;
+  if (_appInicializada || _appInicializando) return;
+  _appInicializando = true;
 
   const hoy = hoyArgentinaISO();
 
@@ -17,13 +18,35 @@ function inicializarApp() {
     DP.initAll();
   }
 
-  cargarClientes();
-  if (typeof inicializarSelectorTipoGasto === 'function') {
-    inicializarSelectorTipoGasto();
-  }
-  cargarSaldo();
-  cargarMovimientosDia();
-  agregarProducto();
+  var cargaBase = typeof cargarDatosIniciales === 'function'
+    ? cargarDatosIniciales()
+    : Promise.resolve();
+
+  Promise.resolve(cargaBase)
+    .catch(function(err) {
+      console.error('Error cargando datos iniciales:', err);
+      showToast('No se pudieron cargar todos los datos iniciales', 'error');
+      return Promise.resolve();
+    })
+    .then(function() {
+      if (typeof inicializarSelectorTipoGasto === 'function') {
+        inicializarSelectorTipoGasto();
+      }
+
+      return Promise.all([
+        Promise.resolve(typeof cargarSaldo === 'function' ? cargarSaldo() : null),
+        Promise.resolve(typeof cargarMovimientosDia === 'function' ? cargarMovimientosDia() : null)
+      ]);
+    })
+    .then(function() {
+      if (typeof agregarProducto === 'function') {
+        agregarProducto();
+      }
+      _appInicializada = true;
+    })
+    .finally(function() {
+      _appInicializando = false;
+    });
 }
 
 window.onload = function() {
@@ -50,6 +73,7 @@ function mostrar(v) {
   if (v === 'sal' && typeof cargarVistaSaldo === 'function') {
     cargarVistaSaldo().catch(function(err) {
       console.error('Error al actualizar vista de saldo:', err);
+      showToast('No se pudo actualizar la vista de saldo', 'error');
     });
   }
 }
@@ -74,6 +98,128 @@ function mostrar(v) {
       });
     }).observe(modalRoot, { childList: true, subtree: false });
   });
+})();
+
+/* Scroll suave en foco de campos (mobile + teclado virtual) */
+(function() {
+  var focusScrollTimer = 0;
+
+  function esCampoEditable(el) {
+    if (!el || el.disabled || el.readOnly) return false;
+
+    var tag = String(el.tagName || '').toLowerCase();
+    if (tag === 'textarea' || tag === 'select') return true;
+    if (tag !== 'input') return false;
+
+    var tipo = String(el.type || 'text').toLowerCase();
+    if (
+      tipo === 'hidden' ||
+      tipo === 'checkbox' ||
+      tipo === 'radio' ||
+      tipo === 'button' ||
+      tipo === 'submit' ||
+      tipo === 'reset' ||
+      tipo === 'file' ||
+      tipo === 'range' ||
+      tipo === 'color'
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function getHeaderOffset() {
+    var bar = document.querySelector('.app-bar');
+    if (bar) {
+      var h = Math.round(bar.getBoundingClientRect().height);
+      if (h > 0) return h + 12;
+    }
+
+    var raw = getComputedStyle(document.documentElement).getPropertyValue('--header-h');
+    var px = parseInt(String(raw || '').trim(), 10);
+    return (Number.isFinite(px) ? px : 75) + 12;
+  }
+
+  function getBottomOffset() {
+    var nav = document.querySelector('.bottom-nav');
+    if (nav) {
+      var h = Math.round(nav.getBoundingClientRect().height);
+      if (h > 0) return h + 12;
+    }
+
+    var raw = getComputedStyle(document.documentElement).getPropertyValue('--nav-h');
+    var px = parseInt(String(raw || '').trim(), 10);
+    return (Number.isFinite(px) ? px : 75) + 12;
+  }
+
+  function getScrollBehavior() {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return 'auto';
+    }
+    return 'smooth';
+  }
+
+  function scrollCampoEnModal(campo, modalBody, behavior) {
+    if (!campo || !modalBody) return;
+
+    var bodyRect = modalBody.getBoundingClientRect();
+    var fieldRect = campo.getBoundingClientRect();
+    var topPad = 10;
+    var bottomPad = 14;
+    var visibleTop = bodyRect.top + topPad;
+    var visibleBottom = bodyRect.bottom - bottomPad;
+
+    if (fieldRect.top >= visibleTop && fieldRect.bottom <= visibleBottom) return;
+
+    var nextTop = modalBody.scrollTop + (fieldRect.top - bodyRect.top) - topPad;
+    modalBody.scrollTo({
+      top: Math.max(0, Math.round(nextTop)),
+      behavior: behavior
+    });
+  }
+
+  function scrollCampoEnPagina(campo, behavior) {
+    var rect = campo.getBoundingClientRect();
+    var vv = window.visualViewport;
+    var viewportTop = vv ? vv.offsetTop : 0;
+    var viewportHeight = vv ? vv.height : window.innerHeight;
+    var safeTop = viewportTop + getHeaderOffset();
+    var safeBottom = viewportTop + viewportHeight - getBottomOffset();
+
+    if (rect.top >= safeTop && rect.bottom <= safeBottom) return;
+
+    var nextY = window.scrollY + rect.top - getHeaderOffset();
+    window.scrollTo({
+      top: Math.max(0, Math.round(nextY)),
+      behavior: behavior
+    });
+  }
+
+  document.addEventListener('focusin', function(evt) {
+    var campo = evt && evt.target;
+    if (!esCampoEditable(campo)) return;
+    if (campo.closest('.cs-panel')) return;
+
+    if (focusScrollTimer) clearTimeout(focusScrollTimer);
+
+    focusScrollTimer = setTimeout(function() {
+      if (!campo || campo !== document.activeElement) return;
+
+      var behavior = getScrollBehavior();
+      var modalOverlay = campo.closest('.modal-overlay');
+      var modalBody = campo.closest('.modal-body');
+
+      if (modalOverlay) {
+        if (modalBody && modalBody.scrollHeight > (modalBody.clientHeight + 2)) {
+          scrollCampoEnModal(campo, modalBody, behavior);
+        }
+        return;
+      }
+
+      scrollCampoEnPagina(campo, behavior);
+    }, 300);
+  }, true);
 })();
 
 window.mostrar = mostrar;

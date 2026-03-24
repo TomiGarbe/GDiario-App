@@ -223,7 +223,7 @@ function guardarGasto() {
   try {
     payload = construirPayloadGastoDesdeFormulario();
   } catch (err) {
-    toast(err && err.message ? err.message : 'Datos invalidos', 'err');
+    showToast(err && err.message ? err.message : 'Datos invalidos', 'error');
     return;
   }
 
@@ -238,13 +238,13 @@ function guardarGasto() {
   })
     .then(function(res) {
       if (res && res.error) {
-        toast(res.error, 'err');
+        showToast('Error al guardar datos', 'error');
         return;
       }
-      toast('Gasto guardado');
+      showToast('Gasto guardado', 'success');
     })
-    .catch(function(err) {
-      toast(err && err.message ? err.message : 'Error al guardar gasto', 'err');
+    .catch(function() {
+      showToast('Error al guardar datos', 'error');
     });
 }
 

@@ -1,63 +1,416 @@
-var clientes = [];
-var clientesEspeciales = [];
+var APP_DATA_CACHE_KEY = 'gd_app_data_v1';
+var APP_DATA_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+var appData = window.appData && typeof window.appData === 'object'
+  ? window.appData
+  : {
+    clientes: [],
+    productos: [],
+    precios: {},
+    clientesEspeciales: []
+  };
+
+var clientes = Array.isArray(appData.clientes) ? appData.clientes.slice() : [];
+var clientesEspeciales = Array.isArray(appData.clientesEspeciales) ? appData.clientesEspeciales.slice() : [];
+
+function normalizarTextoClave(valor) {
+  return String(valor || '').trim().toUpperCase();
+}
+
+function normalizarFechaIso(fechaRaw) {
+  var raw = String(fechaRaw || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  var d = new Date(raw);
+  if (isNaN(d.getTime())) return '';
+
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1).padStart(2, '0');
+  var day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
 
 function normalizarClientes(payload) {
   if (!payload) return [];
 
-  if (Array.isArray(payload)) {
-    return payload
-      .map(function(item) {
-        if (typeof item === 'string') return item.trim();
-        if (item && typeof item === 'object') {
-          var nombre = item.nombre || item.cliente || item.value || item.label;
-          return nombre ? String(nombre).trim() : '';
-        }
-        return '';
-      })
-      .filter(Boolean);
+  var origen = payload;
+  if (!Array.isArray(origen) && typeof origen === 'object') {
+    var nested = origen.clientes || origen.lista || origen.data || origen.items;
+    if (nested) origen = nested;
   }
 
-  if (typeof payload === 'object') {
-    var nested = payload.clientes || payload.lista || payload.data || payload.items;
-    if (nested) return normalizarClientes(nested);
+  if (!Array.isArray(origen)) return [];
+
+  var vistos = Object.create(null);
+  var salida = [];
+
+  origen.forEach(function(item) {
+    var nombre = '';
+
+    if (typeof item === 'string' || typeof item === 'number') {
+      nombre = String(item).trim();
+    } else if (item && typeof item === 'object') {
+      nombre = String(item.nombre || item.cliente || item.value || item.label || '').trim();
+    }
+
+    if (!nombre) return;
+
+    var key = normalizarTextoClave(nombre);
+    if (vistos[key]) return;
+
+    vistos[key] = true;
+    salida.push(nombre);
+  });
+
+  return salida;
+}
+
+function normalizarProductos(payload) {
+  if (!payload) return [];
+
+  var origen = payload;
+  if (!Array.isArray(origen) && typeof origen === 'object') {
+    var nested = origen.productos || origen.lista || origen.data || origen.items;
+    if (nested) origen = nested;
   }
 
-  return [];
+  if (!Array.isArray(origen)) return [];
+
+  var vistos = Object.create(null);
+  var salida = [];
+
+  origen.forEach(function(item) {
+    var nombre = '';
+
+    if (typeof item === 'string' || typeof item === 'number') {
+      nombre = String(item).trim();
+    } else if (item && typeof item === 'object') {
+      nombre = String(item.producto || item.nombre || item.value || item.label || '').trim();
+    }
+
+    if (!nombre) return;
+
+    var key = normalizarTextoClave(nombre);
+    if (vistos[key]) return;
+
+    vistos[key] = true;
+    salida.push(nombre);
+  });
+
+  return salida;
+}
+
+function normalizarPrecios(payload) {
+  var salida = Object.create(null);
+  if (!payload || typeof payload !== 'object') return salida;
+
+  Object.keys(payload).forEach(function(clienteRaw) {
+    var cliente = String(clienteRaw || '').trim();
+    if (!cliente) return;
+
+    var productosRaw = payload[clienteRaw];
+    if (!productosRaw || typeof productosRaw !== 'object') return;
+
+    var productos = Object.create(null);
+
+    Object.keys(productosRaw).forEach(function(productoRaw) {
+      var producto = String(productoRaw || '').trim();
+      if (!producto) return;
+
+      var historialRaw = Array.isArray(productosRaw[productoRaw]) ? productosRaw[productoRaw] : [];
+      var historial = historialRaw.map(function(item) {
+        var precio = toNumber(item && item.precio);
+        var fecha = normalizarFechaIso(item && item.fecha);
+        if (!fecha) return null;
+
+        return {
+          fecha: fecha,
+          precio: precio
+        };
+      }).filter(Boolean).sort(function(a, b) {
+        if (a.fecha < b.fecha) return -1;
+        if (a.fecha > b.fecha) return 1;
+        return 0;
+      });
+
+      if (historial.length) {
+        productos[producto] = historial;
+      }
+    });
+
+    if (Object.keys(productos).length) {
+      salida[cliente] = productos;
+    }
+  });
+
+  return salida;
+}
+
+function derivarProductosDesdePrecios(precios) {
+  var set = Object.create(null);
+  var salida = [];
+  var data = precios && typeof precios === 'object' ? precios : {};
+
+  Object.keys(data).forEach(function(cliente) {
+    var productos = data[cliente];
+    if (!productos || typeof productos !== 'object') return;
+
+    Object.keys(productos).forEach(function(producto) {
+      var historial = Array.isArray(productos[producto]) ? productos[producto] : [];
+      var tienePrecio = historial.some(function(item) {
+        return toNumber(item && item.precio) > 0;
+      });
+
+      if (!tienePrecio) return;
+
+      var key = normalizarTextoClave(producto);
+      if (set[key]) return;
+      set[key] = true;
+      salida.push(producto);
+    });
+  });
+
+  return salida;
+}
+
+function normalizarDatosIniciales(payload) {
+  var src = payload && typeof payload === 'object' ? payload : {};
+  var precios = normalizarPrecios(src.precios);
+  var clientesLista = normalizarClientes(src.clientes);
+  var productosLista = normalizarProductos(src.productos);
+  var especialesLista = normalizarClientes(src.clientesEspeciales);
+
+  if (!clientesLista.length) {
+    clientesLista = Object.keys(precios);
+  }
+
+  if (!productosLista.length) {
+    productosLista = derivarProductosDesdePrecios(precios);
+  }
+
+  return {
+    clientes: clientesLista,
+    productos: productosLista,
+    precios: precios,
+    clientesEspeciales: especialesLista
+  };
+}
+
+function actualizarVariablesClientes() {
+  clientes = Array.isArray(appData.clientes) ? appData.clientes.slice() : [];
+  clientesEspeciales = Array.isArray(appData.clientesEspeciales) ? appData.clientesEspeciales.slice() : [];
+
+  window.appData = appData;
+  window.clientes = clientes;
+  window.clientesEspeciales = clientesEspeciales;
+
+  if (typeof window.actualizarSelectoresClientesEspeciales === 'function') {
+    window.actualizarSelectoresClientesEspeciales();
+  }
+}
+
+function aplicarDatosIniciales(payload) {
+  var normalizados = normalizarDatosIniciales(payload);
+
+  appData.clientes = normalizados.clientes.slice();
+  appData.productos = normalizados.productos.slice();
+  appData.precios = normalizados.precios;
+  appData.clientesEspeciales = normalizados.clientesEspeciales.slice();
+
+  actualizarVariablesClientes();
+  return appData;
+}
+
+function leerCacheDatosIniciales(ignorarExpiracion) {
+  try {
+    var raw = localStorage.getItem(APP_DATA_CACHE_KEY);
+    if (!raw) return null;
+
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    var ts = Number(parsed.ts || 0);
+    if (!ignorarExpiracion) {
+      if (!Number.isFinite(ts)) return null;
+      if ((Date.now() - ts) > APP_DATA_CACHE_TTL_MS) return null;
+    }
+
+    return parsed.data || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function guardarCacheDatosIniciales(data) {
+  try {
+    localStorage.setItem(APP_DATA_CACHE_KEY, JSON.stringify({
+      ts: Date.now(),
+      data: data
+    }));
+  } catch (e) {
+    // Ignore storage errors.
+  }
+}
+
+function cargarDatosIniciales(opts) {
+  var options = opts || {};
+  var forzar = options.forzar === true;
+  var usarCache = options.cache !== false;
+  var cacheViejo = usarCache ? leerCacheDatosIniciales(true) : null;
+
+  if (!forzar && usarCache) {
+    var cacheValido = leerCacheDatosIniciales(false);
+    if (cacheValido) {
+      return Promise.resolve(aplicarDatosIniciales(cacheValido));
+    }
+  }
+
+  if (typeof api !== 'function') {
+    if (cacheViejo) {
+      return Promise.resolve(aplicarDatosIniciales(cacheViejo));
+    }
+    return Promise.reject(new Error('API no disponible'));
+  }
+
+  return api('getInitialData')
+    .then(function(payload) {
+      var data = aplicarDatosIniciales(payload);
+      if (usarCache) guardarCacheDatosIniciales(data);
+      return data;
+    })
+    .catch(function(err) {
+      if (cacheViejo) {
+        return aplicarDatosIniciales(cacheViejo);
+      }
+      throw err;
+    });
 }
 
 function cargarClientes() {
-  api("obtenerClientes").then(lista => {
-    clientes = normalizarClientes(lista);
-    window.clientes = clientes;
-    if (typeof window.actualizarSelectoresClientesEspeciales === 'function') {
-      window.actualizarSelectoresClientesEspeciales();
-    }
-  }).catch(() => {
+  if (Array.isArray(appData.clientes) && appData.clientes.length) {
+    actualizarVariablesClientes();
+    return Promise.resolve(clientes);
+  }
+
+  return cargarDatosIniciales().then(function() {
+    return clientes;
+  }).catch(function() {
     clientes = [];
     window.clientes = clientes;
-    if (typeof window.actualizarSelectoresClientesEspeciales === 'function') {
-      window.actualizarSelectoresClientesEspeciales();
-    }
+    return clientes;
   });
 }
 
 function cargarClientesEspeciales() {
-  api("obtenerClientesEspeciales").then(lista => {
-    clientesEspeciales = normalizarClientes(lista);
-    window.clientesEspeciales = clientesEspeciales;
-    if (typeof window.actualizarSelectoresClientesEspeciales === 'function') {
-      window.actualizarSelectoresClientesEspeciales();
-    }
-  }).catch(() => {
+  if (Array.isArray(appData.clientesEspeciales) && appData.clientesEspeciales.length) {
+    actualizarVariablesClientes();
+    return Promise.resolve(clientesEspeciales);
+  }
+
+  return cargarDatosIniciales().then(function() {
+    return clientesEspeciales;
+  }).catch(function() {
     clientesEspeciales = [];
     window.clientesEspeciales = clientesEspeciales;
-    if (typeof window.actualizarSelectoresClientesEspeciales === 'function') {
-      window.actualizarSelectoresClientesEspeciales();
-    }
+    return clientesEspeciales;
   });
 }
 
+function buscarClaveClientePrecios(cliente) {
+  var mapa = appData && appData.precios && typeof appData.precios === 'object'
+    ? appData.precios
+    : null;
+  if (!mapa) return '';
+
+  var raw = String(cliente || '').trim();
+  if (!raw) return '';
+
+  if (Object.prototype.hasOwnProperty.call(mapa, raw)) return raw;
+
+  var objetivo = normalizarTextoClave(raw);
+  var keys = Object.keys(mapa);
+  for (var i = 0; i < keys.length; i++) {
+    if (normalizarTextoClave(keys[i]) === objetivo) return keys[i];
+  }
+
+  return '';
+}
+
+function buscarClaveProductoPrecios(productos, producto) {
+  if (!productos || typeof productos !== 'object') return '';
+
+  var raw = String(producto || '').trim();
+  if (!raw) return '';
+
+  if (Object.prototype.hasOwnProperty.call(productos, raw)) return raw;
+
+  var objetivo = normalizarTextoClave(raw);
+  var keys = Object.keys(productos);
+  for (var i = 0; i < keys.length; i++) {
+    if (normalizarTextoClave(keys[i]) === objetivo) return keys[i];
+  }
+
+  return '';
+}
+
+function esClienteEspecialLocal(cliente) {
+  var cli = normalizarTextoClave(cliente);
+  if (!cli) return false;
+
+  var lista = Array.isArray(appData.clientesEspeciales) ? appData.clientesEspeciales : [];
+  return lista.some(function(item) {
+    return normalizarTextoClave(item) === cli;
+  });
+}
+
+function obtenerProductosPorClienteLocal(cliente) {
+  var clienteKey = buscarClaveClientePrecios(cliente);
+  if (!clienteKey) return [];
+
+  var productosMap = appData.precios[clienteKey];
+  if (!productosMap || typeof productosMap !== 'object') return [];
+
+  return Object.keys(productosMap).filter(function(producto) {
+    var historial = Array.isArray(productosMap[producto]) ? productosMap[producto] : [];
+    return historial.some(function(item) {
+      return toNumber(item && item.precio) > 0;
+    });
+  });
+}
+
+function obtenerPrecioLocal(cliente, producto, fecha) {
+  if (esClienteEspecialLocal(cliente)) return 0;
+
+  var clienteKey = buscarClaveClientePrecios(cliente);
+  if (!clienteKey) return 0;
+
+  var productosMap = appData.precios[clienteKey];
+  var productoKey = buscarClaveProductoPrecios(productosMap, producto);
+  if (!productoKey) return 0;
+
+  var historial = Array.isArray(productosMap[productoKey]) ? productosMap[productoKey] : [];
+  if (!historial.length) return 0;
+
+  var fechaRef = normalizarFechaIso(fecha) || hoyArgentinaISO();
+
+  for (var i = historial.length - 1; i >= 0; i--) {
+    var item = historial[i];
+    var fechaItem = normalizarFechaIso(item && item.fecha);
+    if (!fechaItem) continue;
+    if (fechaItem <= fechaRef) return toNumber(item && item.precio);
+  }
+
+  return 0;
+}
+
+actualizarVariablesClientes();
+
+window.appData = appData;
 window.clientes = clientes;
 window.clientesEspeciales = clientesEspeciales;
+window.cargarDatosIniciales = cargarDatosIniciales;
 window.cargarClientes = cargarClientes;
 window.cargarClientesEspeciales = cargarClientesEspeciales;
+window.obtenerProductosPorClienteLocal = obtenerProductosPorClienteLocal;
+window.obtenerPrecioLocal = obtenerPrecioLocal;

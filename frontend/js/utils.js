@@ -1,12 +1,36 @@
-function toast(msg, tipo = 'ok') {
+var TOAST_AUTO_HIDE_MS = 3000;
+
+function normalizarToastTipo(tipo) {
+  var t = String(tipo == null ? '' : tipo).trim().toLowerCase();
+
+  if (t === 'ok' || t === 'success' || t === 'exito') return 'success';
+  if (t === 'err' || t === 'error') return 'error';
+  return 'info';
+}
+
+function showToast(message, type) {
   var z = document.getElementById('toastZone');
   if (!z) return;
 
+  var msg = String(message == null ? '' : message).trim();
+  if (!msg) return;
+
+  var toastType = normalizarToastTipo(type);
   var t = document.createElement('div');
-  t.className = 'toast ' + tipo;
-  t.innerHTML = (tipo === 'ok' ? '&#10003;' : '&#10005;') + '&nbsp;' + msg;
+  t.className = 'toast ' + toastType;
+  t.setAttribute('role', 'status');
+  t.setAttribute('aria-live', 'polite');
+  t.textContent = msg;
+
   z.appendChild(t);
-  setTimeout(() => t.remove(), 3200);
+
+  setTimeout(function() {
+    if (t && t.parentNode) t.parentNode.removeChild(t);
+  }, TOAST_AUTO_HIDE_MS);
+}
+
+function toast(msg, tipo) {
+  showToast(msg, tipo);
 }
 
 function hoyArgentinaISO() {
@@ -135,57 +159,43 @@ function pickNumberByKeys(obj, keys) {
   return null;
 }
 
-var LOADING_GLOBAL_COUNT = 0;
-var LOADING_TEXT_DEFAULT = 'Procesando...';
+var SECTION_LOADING_HANDLERS = Object.create(null);
 
-function asegurarOverlayLoading() {
-  var overlay = document.getElementById('loadingOverlay');
-  if (overlay) return overlay;
+function registerSectionLoader(sectionId, handlers) {
+  var id = String(sectionId == null ? '' : sectionId).trim();
+  if (!id) return;
 
-  if (!document.body) return null;
-
-  overlay = document.createElement('div');
-  overlay.id = 'loadingOverlay';
-  overlay.className = 'loading-overlay';
-  overlay.setAttribute('aria-hidden', 'true');
-  overlay.innerHTML = [
-    '<div class="loading-overlay-card" role="status" aria-live="polite">',
-    '  <div class="spinner" aria-hidden="true"></div>',
-    '  <span id="loadingOverlayText">' + LOADING_TEXT_DEFAULT + '</span>',
-    '</div>'
-  ].join('');
-
-  document.body.appendChild(overlay);
-  return overlay;
+  var cfg = handlers && typeof handlers === 'object' ? handlers : {};
+  SECTION_LOADING_HANDLERS[id] = {
+    show: typeof cfg.show === 'function' ? cfg.show : null,
+    hide: typeof cfg.hide === 'function' ? cfg.hide : null
+  };
 }
 
-function setTextoLoadingGlobal(texto) {
-  var label = document.getElementById('loadingOverlayText');
-  if (!label) return;
+function showSectionLoader(sectionId, context) {
+  var id = String(sectionId == null ? '' : sectionId).trim();
+  if (!id) return;
 
-  var txt = String(texto == null ? '' : texto).trim();
-  label.textContent = txt || LOADING_TEXT_DEFAULT;
+  var handlers = SECTION_LOADING_HANDLERS[id];
+  if (!handlers || typeof handlers.show !== 'function') return;
+  handlers.show(context || {});
 }
 
-function mostrarLoading(texto) {
-  var overlay = asegurarOverlayLoading();
+function hideSectionLoader(sectionId, context) {
+  var id = String(sectionId == null ? '' : sectionId).trim();
+  if (!id) return;
 
-  LOADING_GLOBAL_COUNT += 1;
-  if (texto) setTextoLoadingGlobal(texto);
+  var handlers = SECTION_LOADING_HANDLERS[id];
+  if (!handlers || typeof handlers.hide !== 'function') return;
+  handlers.hide(context || {});
+}
 
-  document.body.classList.add('loading-activo');
-  if (overlay) overlay.setAttribute('aria-hidden', 'false');
+function mostrarLoading() {
+  /* Compatibilidad: loader global deshabilitado */
 }
 
 function ocultarLoading() {
-  LOADING_GLOBAL_COUNT = Math.max(0, LOADING_GLOBAL_COUNT - 1);
-  if (LOADING_GLOBAL_COUNT > 0) return;
-
-  document.body.classList.remove('loading-activo');
-
-  var overlay = document.getElementById('loadingOverlay');
-  if (overlay) overlay.setAttribute('aria-hidden', 'true');
-  setTextoLoadingGlobal(LOADING_TEXT_DEFAULT);
+  /* Compatibilidad: loader global deshabilitado */
 }
 
 function setBotonLoading(btn, activo, textoLoading) {
@@ -219,10 +229,14 @@ function setBotonLoading(btn, activo, textoLoading) {
 function ejecutarConLoading(task, opts) {
   var options = opts || {};
   var boton = options.boton || null;
-  var usarGlobal = options.global !== false;
+  var usarGlobal = options.global === true;
+  var sectionId = String(options.sectionId || '').trim();
 
   if (boton) {
     setBotonLoading(boton, true, options.textoBoton);
+  }
+  if (sectionId) {
+    showSectionLoader(sectionId, options);
   }
   if (usarGlobal) {
     mostrarLoading(options.textoGlobal);
@@ -235,12 +249,14 @@ function ejecutarConLoading(task, opts) {
       : Promise.resolve(task);
   } catch (err) {
     if (usarGlobal) ocultarLoading();
+    if (sectionId) hideSectionLoader(sectionId, options);
     if (boton) setBotonLoading(boton, false);
     return Promise.reject(err);
   }
 
   return promesa.finally(function() {
     if (usarGlobal) ocultarLoading();
+    if (sectionId) hideSectionLoader(sectionId, options);
     if (boton) setBotonLoading(boton, false);
   });
 }
@@ -253,15 +269,13 @@ window.normalizarInputDecimal = normalizarInputDecimal;
 window.setupDecimalInputValidation = setupDecimalInputValidation;
 window.toNumber = toNumber;
 window.pickNumber = pickNumber;
+window.showToast = showToast;
+window.registerSectionLoader = registerSectionLoader;
+window.showSectionLoader = showSectionLoader;
+window.hideSectionLoader = hideSectionLoader;
 window.mostrarLoading = mostrarLoading;
 window.ocultarLoading = ocultarLoading;
 window.setBotonLoading = setBotonLoading;
 window.ejecutarConLoading = ejecutarConLoading;
 
 setupDecimalInputValidation(document);
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', asegurarOverlayLoading);
-} else {
-  asegurarOverlayLoading();
-}
