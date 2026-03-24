@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="./css/styles.css">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <meta name="theme-color" content="#1A56FF">
+  <link rel="icon" href="./favicon.ico">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+
+<div class="toast-zone" id="toastZone"></div>
+<div id="modalRoot"></div>
+<div class="loading-overlay" id="loadingOverlay" aria-hidden="true">
+  <div class="loading-overlay-card" role="status" aria-live="polite">
+    <div class="spinner" aria-hidden="true"></div>
+    <span id="loadingOverlayText">Procesando...</span>
+  </div>
+</div>
+
+<!-- AUTH GATE -->
+<section id="authGate" class="auth-gate" style="display:none">
+  <div class="auth-card">
+    <p class="card-label">Acceso seguro</p>
+    <h2>Iniciar sesión</h2>
+    <p class="auth-sub">Debés iniciar sesión con Google para usar la app.</p>
+    <div id="googleLoginBtn"></div>
+    <p id="authMsg" class="auth-msg" style="display:none"></p>
+  </div>
+</section>
+
+<div id="appRoot" style="display:none">
+
+  <!-- HEADER -->
+  <header class="app-bar">
+    <div class="app-bar-inner">
+      <div class="app-bar-brand">
+        <div class="app-bar-logo">
+          <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+        </div>
+        <div>
+          <h1>Registro Diario</h1>
+          <p class="app-bar-sub" id="fechaHoy"></p>
+        </div>
+      </div>
+      <div class="header-usuario">
+        <span class="badge-usuario" id="nombreUsuario"></span>
+        <button type="button" class="badge-logout" onclick="cerrarSesion()" title="Cerrar sesión">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+        </button>
+        <button class="theme-toggle" onclick="toggleTheme()" title="Cambiar tema" aria-label="Cambiar tema">
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+          <svg class="icon-sun"  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MOVIMIENTOS -->
+  <section id="sec-mov" class="section active">
+    <div class="page-wrap">
+      <div class="sec-head">
+        <div class="sec-icon blue">
+          <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+        </div>
+        <div>
+          <div class="sec-title">Movimientos</div>
+          <div class="sec-sub">Registrá compras, descargas y pagos</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="card-label">Fecha del movimiento</p>
+        <div class="field"><input type="date" id="fecha"></div>
+      </div>
+
+      <div class="total-bar">
+        <span class="total-bar-lbl">Monto total</span>
+        <span class="total-bar-val">$ <span id="totalGeneral">0</span></span>
+      </div>
+
+      <div id="productos"></div>
+
+      <button class="btn btn-outline" onclick="agregarProducto()" style="margin-bottom:14px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             style="width:18px;height:18px;flex-shrink:0;stroke-linecap:round">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        <span class="lbl">Agregar movimiento</span>
+      </button>
+
+      <button class="btn btn-primary" id="btnGuardar" onclick="guardar()">
+        <div class="spin"></div><span class="lbl">Guardar movimiento</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- GASTOS -->
+  <section id="sec-gas" class="section">
+    <div class="page-wrap">
+      <div class="sec-head">
+        <div class="sec-icon amber">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+        </div>
+        <div>
+          <div class="sec-title">Gastos</div>
+          <div class="sec-sub">Comidas, gasoil, ayudantes y más</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="card-label">Nuevo gasto</p>
+        <div class="field"><label>Fecha</label><input type="date" id="fechaGasto"></div>
+        <div class="field">
+          <label>Tipo de gasto</label>
+          <div id="tipoGastoMount"></div>
+        </div>
+        <div class="field otro-field" id="otroField" style="display:none">
+          <label>Describí el gasto</label>
+          <input type="text" id="otroGasto" placeholder="Ej: Repuesto, herramienta...">
+        </div>
+        <div class="field" id="montoField">
+          <label>Monto ($)</label>
+          <input type="text" id="monto" placeholder="0.00" inputmode="decimal" data-decimal="true">
+        </div>
+        <div class="field" id="ayudantesField" style="display:none">
+          <label>Adelantos por empleado</label>
+          <div id="ayudantesList" class="ayudantes-list"></div>
+          <button type="button" class="btn btn-outline btn-add-empleado" onclick="agregarEmpleado()">
+            <span class="lbl">Agregar empleado</span>
+          </button>
+        </div>
+        <button class="btn btn-primary" id="btnGasto" onclick="guardarGasto()">
+          <div class="spin"></div><span class="lbl">Guardar gasto</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- SALDO -->
+  <section id="sec-sal" class="section">
+    <div class="page-wrap">
+      <div class="sec-head">
+        <div class="sec-icon green">
+          <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z"/><path d="M12 12v3M10.5 13.5h3"/></svg>
+        </div>
+        <div>
+          <div class="sec-title">Saldo</div>
+          <div class="sec-sub">Balance, entregas y movimientos</div>
+        </div>
+      </div>
+
+      <div class="saldo-hero">
+        <p class="sh-label">Saldo actual</p>
+        <p class="sh-value">$ <span id="saldo">&#8212;</span></p>
+      </div>
+
+      <div class="entrega-card" id="cardEntrega" style="display:block">
+        <p class="card-label">💸 Registrar entrega de dinero</p>
+        <div class="field"><label>Fecha</label><input type="date" id="fechaEntrega"></div>
+        <div class="field">
+          <label>Monto ($)</label>
+          <input type="text" id="montoEntrega" placeholder="0.00" inputmode="decimal" data-decimal="true">
+        </div>
+        <button class="btn btn-green" id="btnEntrega" onclick="registrarEntrega()">
+          <div class="spin"></div><span class="lbl">Registrar entrega</span>
+        </button>
+      </div>
+
+      <div class="fecha-movimientos-card">
+        <p class="card-label">📅 Movimientos del día</p>
+        <div class="field">
+          <label for="fechaSaldo">Fecha</label>
+          <input type="date" id="fechaSaldo" onchange="cargarMovimientosDia()">
+        </div>
+      </div>
+
+      <div class="dia-totales">
+        <div class="dia-tot-chip ingreso-chip">
+          <span class="dia-tot-lbl">Ingresos del dia</span>
+          <span class="dia-tot-val">$ <span id="totIngresos">0</span></span>
+        </div>
+        <div class="dia-tot-chip egreso-chip">
+          <span class="dia-tot-lbl">Egresos del dia</span>
+          <span class="dia-tot-val">$ <span id="totEgresos">0</span></span>
+        </div>
+      </div>
+
+      <div class="dia-neto">
+        <span class="dia-neto-lbl">Neto del dia</span>
+        <span class="dia-neto-val pos" id="netodia">$ 0</span>
+      </div>
+
+      <div class="card">
+        <p class="card-label">Movimientos del dia</p>
+        <div class="mov-bulk-actions" id="movBulkActions" style="display:none">
+          <button type="button" class="btn btn-outline btn-danger-outline" id="btnEliminarSeleccionados">
+            Eliminar seleccionados
+          </button>
+        </div>
+        <div class="mov-list" id="movList">
+          <div class="mov-empty">
+            <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            Sin movimientos para esta fecha
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- NAV -->
+  <nav class="bottom-nav">
+    <div class="bottom-nav-inner">
+      <button class="nav-btn active" id="nav-mov" onclick="mostrar('mov')">
+        <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/><path d="M9 12h6M9 16h4"/></svg>
+        Movimientos
+      </button>
+      <button class="nav-btn" id="nav-gas" onclick="mostrar('gas')">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+        Gastos
+      </button>
+      <button class="nav-btn" id="nav-sal" onclick="mostrar('sal')">
+        <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z"/><path d="M12 12v3M10.5 13.5h3"/></svg>
+        Saldo
+      </button>
+    </div>
+  </nav>
+
+</div><!-- #appRoot -->
+
+<script src="./js/auth.js"></script>
+<script src="./js/api.js"></script>
+<script src="./js/utils.js"></script>
+<script src="./js/clientes.js"></script>
+<script src="./js/clienteSelector.js"></script>
+<script src="./js/movimientos.js"></script>
+<script src="./js/gastos.js"></script>
+<script src="./js/saldo.js"></script>
+<script src="./js/ui.js"></script>
+<script src="./js/datepicker.js"></script>
+
+<!-- Toggle de tema — persiste en localStorage -->
+<script>
+(function() {
+  var saved = localStorage.getItem('theme');
+  if (saved === 'dark' || (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+})();
+function toggleTheme() {
+  var isDark = document.documentElement.classList.toggle('dark');
+  localStorage.setItem('theme', isDark ? 'dark' : 'light');
+}
+window.toggleTheme = toggleTheme;
+</script>
+
+</body>
+</html>

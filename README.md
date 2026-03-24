@@ -1,1 +1,0 @@
-# GDiario-App
