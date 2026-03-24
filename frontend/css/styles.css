@@ -1108,12 +1108,11 @@ select {
 }
 #btnModoSeleccion {
   flex: 1;
-  min-width: 122px;
   padding-inline: 14px;
 }
 #btnEditarFechaSeleccionados,
 #btnEliminarSeleccionados {
-  flex: 1;
+  flex: 2;
   min-width: 0;
   display: none;
 }

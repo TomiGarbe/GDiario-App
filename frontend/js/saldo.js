@@ -456,15 +456,11 @@ function renderMovimientosDia(payload) {
     var selectionClass = isSelected ? ' is-selected' : '';
     var modeClass = MODO_SELECCION_MOVS ? ' selection-mode' : '';
     var clickableClass = hasId ? '' : ' no-id';
-    var selectedFlag = (MODO_SELECCION_MOVS && isSelected)
-      ? '<span class="mov-selected-flag">Seleccionado</span>'
-      : '';
 
     html += `
       <div class="mov-item es-${tono}${selectionClass}${modeClass}${clickableClass}" data-id="${escapeHtml(mov.id)}">
         <div class="mov-top">
           <div class="mov-monto ${tono}">${montoTxt}</div>
-          ${selectedFlag}
           ${htmlAccionesMovimiento(mov)}
         </div>
 
