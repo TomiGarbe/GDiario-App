@@ -218,6 +218,43 @@ function construirPayloadGastoDesdeFormulario() {
   return payload;
 }
 
+function limpiarEstadoVisualFormularioGasto() {
+  var section = document.getElementById('sec-gas');
+  if (!section) return;
+
+  var campos = section.querySelectorAll('input, select, textarea');
+  campos.forEach(function(campo) {
+    if (campo && typeof campo.setCustomValidity === 'function') {
+      campo.setCustomValidity('');
+    }
+    if (campo) {
+      campo.removeAttribute('aria-invalid');
+      campo.classList.remove('invalid', 'error', 'is-invalid', 'field-error');
+    }
+  });
+}
+
+function resetearFormularioGasto() {
+  var fechaInp = document.getElementById('fechaGasto');
+  var montoInp = document.getElementById('monto');
+  var otroInp = document.getElementById('otroGasto');
+  var tipoInp = document.getElementById('tipo');
+  var list = document.getElementById('ayudantesList');
+
+  if (fechaInp) fechaInp.value = hoyArgentinaISO();
+  if (montoInp) montoInp.value = '';
+  if (otroInp) otroInp.value = '';
+  if (tipoInp) tipoInp.value = '';
+  if (list) list.innerHTML = '';
+
+  if (typeof csSetValue === 'function') {
+    csSetValue('gasto-tipo', '', true);
+  }
+
+  toggleCamposGasto('', { skipAutoEmpleado: true });
+  limpiarEstadoVisualFormularioGasto();
+}
+
 function guardarGasto() {
   var payload;
   try {
@@ -241,7 +278,8 @@ function guardarGasto() {
         showToast('Error al guardar datos', 'error');
         return;
       }
-      showToast('Gasto guardado', 'success');
+      resetearFormularioGasto();
+      showToast('Gasto guardado correctamente', 'success');
     })
     .catch(function() {
       showToast('Error al guardar datos', 'error');
@@ -255,4 +293,5 @@ window.agregarEmpleado = agregarEmpleado;
 window.obtenerEmpleados = obtenerEmpleados;
 window.calcularTotalEmpleados = calcularTotalEmpleados;
 window.construirPayloadGastoDesdeFormulario = construirPayloadGastoDesdeFormulario;
+window.resetearFormularioGasto = resetearFormularioGasto;
 window.guardarGasto = guardarGasto;

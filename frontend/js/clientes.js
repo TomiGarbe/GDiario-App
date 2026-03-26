@@ -275,33 +275,13 @@ function cargarDatosIniciales(opts) {
 }
 
 function cargarClientes() {
-  if (Array.isArray(appData.clientes) && appData.clientes.length) {
-    actualizarVariablesClientes();
-    return Promise.resolve(clientes);
-  }
-
-  return cargarDatosIniciales().then(function() {
-    return clientes;
-  }).catch(function() {
-    clientes = [];
-    window.clientes = clientes;
-    return clientes;
-  });
+  actualizarVariablesClientes();
+  return Promise.resolve(clientes);
 }
 
 function cargarClientesEspeciales() {
-  if (Array.isArray(appData.clientesEspeciales) && appData.clientesEspeciales.length) {
-    actualizarVariablesClientes();
-    return Promise.resolve(clientesEspeciales);
-  }
-
-  return cargarDatosIniciales().then(function() {
-    return clientesEspeciales;
-  }).catch(function() {
-    clientesEspeciales = [];
-    window.clientesEspeciales = clientesEspeciales;
-    return clientesEspeciales;
-  });
+  actualizarVariablesClientes();
+  return Promise.resolve(clientesEspeciales);
 }
 
 function buscarClaveClientePrecios(cliente) {

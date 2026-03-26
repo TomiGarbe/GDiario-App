@@ -2,49 +2,6 @@ var _appInicializada = false;
 var _appInicializando = false;
 var _actualizandoDatosManual = false;
 
-function obtenerLoaderInicio() {
-  var existente = document.getElementById('startupLoader');
-  if (existente) return existente;
-
-  var root = document.getElementById('appRoot');
-  if (!root) return null;
-
-  var overlay = document.createElement('div');
-  overlay.id = 'startupLoader';
-  overlay.className = 'startup-loader';
-  overlay.innerHTML = [
-    '<div class="startup-loader-card">',
-    '  <div class="spinner" aria-hidden="true"></div>',
-    '  <p class="startup-loader-text">Cargando datos...</p>',
-    '</div>'
-  ].join('');
-
-  root.appendChild(overlay);
-  return overlay;
-}
-
-function setEstadoCargaInicio(activo, texto) {
-  var root = document.getElementById('appRoot');
-  if (!root) return;
-
-  var overlay = obtenerLoaderInicio();
-  if (!overlay) return;
-
-  if (texto) {
-    var txt = overlay.querySelector('.startup-loader-text');
-    if (txt) txt.textContent = String(texto);
-  }
-
-  if (activo) {
-    root.classList.add('app-startup-loading');
-    overlay.classList.add('open');
-    return;
-  }
-
-  overlay.classList.remove('open');
-  root.classList.remove('app-startup-loading');
-}
-
 function sincronizarUIConDatosIniciales() {
   var cards = Array.prototype.slice.call(document.querySelectorAll('.prod-card'));
   var opcionesClientes = Array.isArray(window.clientes) ? window.clientes.slice() : [];
@@ -90,10 +47,10 @@ function actualizarDatosManual() {
     setBotonLoading(btnActualizar, true, 'Actualizando...');
   }
 
-  return cargarDatosIniciales({ forzar: true, limpiarCache: true, sobrescribirCache: true })
+  return cargarDatosIniciales()
     .then(function() {
       sincronizarUIConDatosIniciales();
-      showToast('Datos actualizados', 'success');
+      showToast('Datos actualizados correctamente', 'success');
     })
     .catch(function(err) {
       console.error('Error actualizando datos:', err);
@@ -121,7 +78,6 @@ function inicializarApp() {
   if (_appInicializada || _appInicializando) return;
   _appInicializando = true;
   enlazarBotonActualizarDatos();
-  setEstadoCargaInicio(true, 'Actualizando clientes, productos y precios...');
 
   const hoy = hoyArgentinaISO();
 
@@ -136,20 +92,7 @@ function inicializarApp() {
     DP.initAll();
   }
 
-  var cargaBase = typeof cargarDatosIniciales === 'function'
-    ? cargarDatosIniciales({ forzar: true, limpiarCache: true, sobrescribirCache: true })
-    : Promise.resolve();
-
-  Promise.resolve(cargaBase)
-    .then(function() {
-      sincronizarUIConDatosIniciales();
-      return Promise.resolve();
-    })
-    .catch(function(err) {
-      console.error('Error cargando datos iniciales:', err);
-      showToast('No se pudieron cargar todos los datos iniciales', 'error');
-      return Promise.resolve();
-    })
+  Promise.resolve()
     .then(function() {
       if (typeof inicializarSelectorTipoGasto === 'function') {
         inicializarSelectorTipoGasto();
@@ -167,7 +110,6 @@ function inicializarApp() {
       _appInicializada = true;
     })
     .finally(function() {
-      setEstadoCargaInicio(false);
       _appInicializando = false;
     });
 }
