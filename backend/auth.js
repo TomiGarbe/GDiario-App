@@ -1,6 +1,7 @@
 const USUARIOS_PERMITIDOS = Object.freeze([
   "tomigarbe2003@gmail.com",
-  "cristiangarbe@gmail.com"
+  "cristiangarbe@gmail.com",
+  "angel2018dios@gmail.com"
 ]);
 const DEV_TOKEN = "dev-token";
 const DEV_EMAIL = "dev@local";

@@ -36,7 +36,7 @@ function doPost(e) {
       result = obtenerClientes();
     }
     else if (action === "getInitialData") {
-      result = getInitialData(data.fecha || null);
+      result = getInitialData(data.fecha || null, { forzar: data.forzar === true });
     }
     else if (action === "obtenerProductosPorCliente") {
       result = obtenerProductosPorCliente(data.cliente);

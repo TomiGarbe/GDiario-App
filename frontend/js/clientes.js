@@ -1,5 +1,5 @@
 var APP_DATA_CACHE_KEY = 'gd_app_data_v1';
-var APP_DATA_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+var _cargaDatosInicialesPendiente = null;
 
 var appData = window.appData && typeof window.appData === 'object'
   ? window.appData
@@ -213,32 +213,22 @@ function actualizarVariablesClientes() {
 function aplicarDatosIniciales(payload) {
   var normalizados = normalizarDatosIniciales(payload);
 
-  appData.clientes = normalizados.clientes.slice();
-  appData.productos = normalizados.productos.slice();
-  appData.precios = normalizados.precios;
-  appData.clientesEspeciales = normalizados.clientesEspeciales.slice();
+  appData = {
+    clientes: normalizados.clientes.slice(),
+    productos: normalizados.productos.slice(),
+    precios: normalizados.precios,
+    clientesEspeciales: normalizados.clientesEspeciales.slice()
+  };
 
   actualizarVariablesClientes();
   return appData;
 }
 
-function leerCacheDatosIniciales(ignorarExpiracion) {
+function limpiarCacheDatosIniciales() {
   try {
-    var raw = localStorage.getItem(APP_DATA_CACHE_KEY);
-    if (!raw) return null;
-
-    var parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-
-    var ts = Number(parsed.ts || 0);
-    if (!ignorarExpiracion) {
-      if (!Number.isFinite(ts)) return null;
-      if ((Date.now() - ts) > APP_DATA_CACHE_TTL_MS) return null;
-    }
-
-    return parsed.data || null;
+    localStorage.removeItem(APP_DATA_CACHE_KEY);
   } catch (e) {
-    return null;
+    // Ignore storage errors.
   }
 }
 
@@ -255,36 +245,33 @@ function guardarCacheDatosIniciales(data) {
 
 function cargarDatosIniciales(opts) {
   var options = opts || {};
-  var forzar = options.forzar === true;
-  var usarCache = options.cache !== false;
-  var cacheViejo = usarCache ? leerCacheDatosIniciales(true) : null;
+  var forzar = options.forzar !== false;
+  var limpiarCache = options.limpiarCache !== false;
+  var sobrescribirCache = options.sobrescribirCache !== false;
 
-  if (!forzar && usarCache) {
-    var cacheValido = leerCacheDatosIniciales(false);
-    if (cacheValido) {
-      return Promise.resolve(aplicarDatosIniciales(cacheValido));
-    }
+  if (_cargaDatosInicialesPendiente) {
+    return _cargaDatosInicialesPendiente;
   }
 
   if (typeof api !== 'function') {
-    if (cacheViejo) {
-      return Promise.resolve(aplicarDatosIniciales(cacheViejo));
-    }
     return Promise.reject(new Error('API no disponible'));
   }
 
-  return api('getInitialData')
+  if (limpiarCache) {
+    limpiarCacheDatosIniciales();
+  }
+
+  _cargaDatosInicialesPendiente = api('getInitialData', { forzar: forzar })
     .then(function(payload) {
       var data = aplicarDatosIniciales(payload);
-      if (usarCache) guardarCacheDatosIniciales(data);
+      if (sobrescribirCache) guardarCacheDatosIniciales(data);
       return data;
     })
-    .catch(function(err) {
-      if (cacheViejo) {
-        return aplicarDatosIniciales(cacheViejo);
-      }
-      throw err;
+    .finally(function() {
+      _cargaDatosInicialesPendiente = null;
     });
+
+  return _cargaDatosInicialesPendiente;
 }
 
 function cargarClientes() {

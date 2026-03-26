@@ -40,8 +40,14 @@ function buscarHistorialProducto(productosCliente, productoBuscado) {
   return null;
 }
 
-function obtenerDatosPrecios(fecha) {
+function obtenerDatosPrecios(fecha, opts) {
+  const options = opts && typeof opts === "object" ? opts : {};
+  const forzar = options.forzar === true;
   const claveFecha = normalizarClaveFechaPrecios(fecha);
+
+  if (forzar && CACHE_DATOS_PRECIOS[claveFecha]) {
+    delete CACHE_DATOS_PRECIOS[claveFecha];
+  }
 
   if (CACHE_DATOS_PRECIOS[claveFecha]) {
     return CACHE_DATOS_PRECIOS[claveFecha];
@@ -187,9 +193,10 @@ function serializarHistorialPrecios(historial) {
   });
 }
 
-function getInitialData(fecha) {
+function getInitialData(fecha, opts) {
+  const options = opts && typeof opts === "object" ? opts : {};
   const fechaBase = normalizarClaveFechaPrecios(fecha || hoyArgentinaISO());
-  const datosPrecios = obtenerDatosPrecios(fechaBase);
+  const datosPrecios = obtenerDatosPrecios(fechaBase, { forzar: options.forzar === true });
   const clientes = Object.keys(datosPrecios).filter(function(cliente) {
     return !CLIENTES_NO_MOSTRAR_SELECTOR.includes(cliente);
   });
