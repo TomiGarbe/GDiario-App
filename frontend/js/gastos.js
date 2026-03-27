@@ -278,8 +278,15 @@ function guardarGasto() {
         showToast('Error al guardar datos', 'error');
         return;
       }
-      resetearFormularioGasto();
-      showToast('Gasto guardado correctamente', 'success');
+      if (typeof recargarAppManteniendoTab === 'function') {
+        recargarAppManteniendoTab();
+        return;
+      }
+
+      showToast('Guardado correctamente', 'success');
+      setTimeout(function() {
+        location.reload();
+      }, 500);
     })
     .catch(function() {
       showToast('Error al guardar datos', 'error');

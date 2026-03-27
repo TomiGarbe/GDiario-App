@@ -1843,20 +1843,22 @@ function registrarEntrega() {
   var btnEntrega = document.getElementById('btnEntrega');
 
   ejecutarConLoading(function() {
-    return api("registrarEntrega", { monto: monto, fecha: fecha })
-      .then(function() {
-        return Promise.all([
-          cargarSaldo(),
-          cargarMovimientosDia()
-        ]);
-      });
+    return api("registrarEntrega", { monto: monto, fecha: fecha });
   }, {
     boton: btnEntrega,
     textoBoton: 'Guardando...',
     textoGlobal: 'Registrando entrega...'
   })
     .then(function() {
-      showToast("Entrega registrada", 'success');
+      if (typeof recargarAppManteniendoTab === 'function') {
+        recargarAppManteniendoTab();
+        return;
+      }
+
+      showToast('Guardado correctamente', 'success');
+      setTimeout(function() {
+        location.reload();
+      }, 500);
     })
     .catch(function() {
       showToast('Error al guardar datos', 'error');

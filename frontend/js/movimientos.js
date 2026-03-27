@@ -1117,7 +1117,15 @@ function guardar() {
         return;
       }
 
-      showToast('Movimiento guardado', 'success');
+      if (typeof recargarAppManteniendoTab === 'function') {
+        recargarAppManteniendoTab();
+        return;
+      }
+
+      showToast('Guardado correctamente', 'success');
+      setTimeout(function() {
+        location.reload();
+      }, 500);
     })
     .catch(function(err) {
       showToast('Error al guardar datos', 'error');

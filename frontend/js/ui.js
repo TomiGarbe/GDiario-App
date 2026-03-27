@@ -1,6 +1,88 @@
 var _appInicializada = false;
 var _appInicializando = false;
 var _actualizandoDatosManual = false;
+var ACTIVE_TAB_STORAGE_KEY = 'activeTab';
+
+function normalizarTabKey(tabRaw) {
+  var tab = String(tabRaw || '').trim().toLowerCase();
+  if (tab === 'mov' || tab === 'movimiento' || tab === 'movimientos') return 'mov';
+  if (tab === 'gas' || tab === 'gasto' || tab === 'gastos') return 'gas';
+  if (tab === 'sal' || tab === 'saldo') return 'sal';
+  return '';
+}
+
+function tabKeyToStorageValue(tabKeyRaw) {
+  var tabKey = normalizarTabKey(tabKeyRaw);
+  if (tabKey === 'mov') return 'movimientos';
+  if (tabKey === 'gas') return 'gastos';
+  if (tabKey === 'sal') return 'saldo';
+  return '';
+}
+
+function storageValueToTabKey(value) {
+  return normalizarTabKey(value);
+}
+
+function obtenerTabActiva() {
+  var navActiva = document.querySelector('.nav-btn.active');
+  if (navActiva && navActiva.id) {
+    return normalizarTabKey(navActiva.id.replace('nav-', '')) || 'mov';
+  }
+
+  var seccionActiva = document.querySelector('.section.active');
+  if (seccionActiva && seccionActiva.id) {
+    return normalizarTabKey(seccionActiva.id.replace('sec-', '')) || 'mov';
+  }
+
+  return 'mov';
+}
+
+function guardarTabActivaParaRecarga(tabRaw) {
+  var tabKey = normalizarTabKey(tabRaw) || obtenerTabActiva();
+  var tabValue = tabKeyToStorageValue(tabKey);
+  if (!tabValue) return;
+
+  try {
+    localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, tabValue);
+  } catch (e) {
+    // Ignore storage errors.
+  }
+}
+
+function restaurarTabLuegoDeRecarga() {
+  var tabValue = '';
+  try {
+    tabValue = String(localStorage.getItem(ACTIVE_TAB_STORAGE_KEY) || '').trim();
+  } catch (e) {
+    tabValue = '';
+  }
+
+  if (!tabValue) return;
+
+  try {
+    localStorage.removeItem(ACTIVE_TAB_STORAGE_KEY);
+  } catch (e2) {
+    // Ignore storage errors.
+  }
+
+  var tab = storageValueToTabKey(tabValue);
+  if (!tab || tab === obtenerTabActiva()) return;
+  mostrar(tab);
+}
+
+function recargarAppManteniendoTab(opts) {
+  var options = opts || {};
+  guardarTabActivaParaRecarga(options.tab);
+
+  showToast('Guardado correctamente', 'success');
+
+  var delayMs = Number(options.delayMs);
+  if (!isFinite(delayMs) || delayMs < 0) delayMs = 500;
+
+  setTimeout(function() {
+    location.reload();
+  }, delayMs);
+}
 
 function sincronizarUIConDatosIniciales() {
   var cards = Array.prototype.slice.call(document.querySelectorAll('.prod-card'));
@@ -122,6 +204,7 @@ function inicializarApp() {
       }
       sincronizarUIConDatosIniciales();
       _appInicializada = true;
+      restaurarTabLuegoDeRecarga();
     })
     .finally(function() {
       _appInicializando = false;
@@ -304,3 +387,4 @@ function mostrar(v) {
 window.mostrar = mostrar;
 window.inicializarApp = inicializarApp;
 window.actualizarDatosManual = actualizarDatosManual;
+window.recargarAppManteniendoTab = recargarAppManteniendoTab;
