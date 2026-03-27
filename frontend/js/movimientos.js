@@ -1118,9 +1118,6 @@ function guardar() {
       }
 
       showToast('Movimiento guardado', 'success');
-      setTimeout(function() {
-        location.reload();
-      }, 350);
     })
     .catch(function(err) {
       showToast('Error al guardar datos', 'error');

@@ -1,5 +1,6 @@
 var APP_DATA_CACHE_KEY = 'gd_app_data_v1';
 var _cargaDatosInicialesPendiente = null;
+let isDataLoaded = false;
 
 var appData = window.appData && typeof window.appData === 'object'
   ? window.appData
@@ -221,6 +222,8 @@ function aplicarDatosIniciales(payload) {
   };
 
   actualizarVariablesClientes();
+  isDataLoaded = true;
+  window.isDataLoaded = true;
   return appData;
 }
 
@@ -376,6 +379,7 @@ actualizarVariablesClientes();
 window.appData = appData;
 window.clientes = clientes;
 window.clientesEspeciales = clientesEspeciales;
+window.isDataLoaded = isDataLoaded;
 window.cargarDatosIniciales = cargarDatosIniciales;
 window.cargarClientes = cargarClientes;
 window.cargarClientesEspeciales = cargarClientesEspeciales;

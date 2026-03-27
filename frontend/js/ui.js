@@ -64,6 +64,18 @@ function actualizarDatosManual() {
     });
 }
 
+function cargarDatosInicialesEnSegundoPlano() {
+  if (typeof cargarDatosIniciales !== 'function') return;
+
+  cargarDatosIniciales()
+    .then(function() {
+      sincronizarUIConDatosIniciales();
+    })
+    .catch(function(err) {
+      console.error('Error cargando datos iniciales:', err);
+    });
+}
+
 function enlazarBotonActualizarDatos() {
   var btn = document.getElementById('btnActualizarDatos');
   if (!btn || btn.dataset.listenerReady === '1') return;
@@ -78,6 +90,7 @@ function inicializarApp() {
   if (_appInicializada || _appInicializando) return;
   _appInicializando = true;
   enlazarBotonActualizarDatos();
+  cargarDatosInicialesEnSegundoPlano();
 
   const hoy = hoyArgentinaISO();
 
@@ -107,6 +120,7 @@ function inicializarApp() {
       if (typeof agregarProducto === 'function') {
         agregarProducto();
       }
+      sincronizarUIConDatosIniciales();
       _appInicializada = true;
     })
     .finally(function() {
