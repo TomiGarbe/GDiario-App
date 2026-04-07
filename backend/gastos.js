@@ -143,13 +143,17 @@ function normalizarAdelantosAyudantes(empleadosRaw, montoTotal) {
 }
 
 function registrarAdelantosAyudantes(hojaSueldos, fecha, adelantos) {
+  const fecahSueldos = parseFecha(fecha);
+  
   adelantos.forEach(item => {
     hojaSueldos.appendRow([
-      fecha,
+      fecahSueldos,
       item.nombre,
       "Adelanto",
       "Adelanto",
       item.monto
     ]);
+
+    hojaSueldos.getRange(hojaSueldos.getLastRow(), 1).setNumberFormat("dd/MM/yyyy");
   });
 }
