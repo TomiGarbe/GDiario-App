@@ -1,6 +1,6 @@
 const API_URL = String(
   window.API_URL
-  || "https://script.google.com/macros/s/AKfycbxkz4z3-DHtKqc7pqCUHpbl_ZHu-78qa6hi6xSlc4AWIRW-n4L3GyZDJQgitu9jQOFu/exec"
+  || "https://script.google.com/macros/s/AKfycbysqvrSFP6XOrsdNYOCrg9ZABYI4qPBNd4Ot8G6XS0s3jq7JWFbXuuo9yfE4OKEXqqK/exec"
 ).trim();
 
 function parseApiResponse(payload) {

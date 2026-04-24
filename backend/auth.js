@@ -12,6 +12,13 @@ const CABECERA_TOKENS = Object.freeze(["Token", "Email", "Fecha Creacion"]);
 let _ssBaseTokens = null;
 let _hojaTokens = null;
 
+function forzarPermisos() {
+  const testDrive = DriveApp.getFiles().hasNext();
+  const testSheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  Logger.log("Permisos OK");
+}
+
 function normalizarEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
