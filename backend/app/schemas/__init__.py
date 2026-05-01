@@ -13,6 +13,8 @@ from app.schemas.sync import (
     SyncClientsResponse,
     SyncMovementsRequest,
     SyncMovementsResponse,
+    SyncPeriodRequest,
+    SyncPeriodResponse,
     SyncPricesRequest,
     SyncPricesResponse,
 )
@@ -30,6 +32,8 @@ __all__ = [
     "SyncExportResponse",
     "SyncImportRequest",
     "SyncImportResponse",
+    "SyncPeriodRequest",
+    "SyncPeriodResponse",
     "SyncClientsRequest",
     "SyncClientsResponse",
     "SyncPricesRequest",

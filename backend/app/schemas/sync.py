@@ -132,6 +132,16 @@ class SyncExportResponse(BaseModel):
     movement_details: list[SyncExportMovementDetailItem]
 
 
+class SyncPeriodRequest(BaseModel):
+    sheet_id: str = Field(..., min_length=1, max_length=255)
+    period: SyncPeriodPayload
+
+
+class SyncPeriodResponse(BaseModel):
+    period_id: UUID
+    created: bool
+
+
 class SyncClientsRequest(BaseModel):
     names: list[str] = Field(default_factory=list)
 
@@ -160,7 +170,6 @@ class SyncMovementDetailByIdPayload(BaseModel):
 
 
 class SyncMovementByIdPayload(BaseModel):
-    period_id: UUID
     date: date
     type: Literal["compra", "venta", "gasto", "pago", "sueldo"]
     client_id: UUID | None = None
@@ -182,9 +191,12 @@ class SyncMovementByIdPayload(BaseModel):
 
 
 class SyncMovementsRequest(BaseModel):
+    period_id: UUID
+    is_first_batch: bool = True
     movements: list[SyncMovementByIdPayload] = Field(default_factory=list)
 
 
 class SyncMovementsResponse(BaseModel):
     received: int
     inserted: int
+    deleted_previous_sheet_movements: int

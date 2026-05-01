@@ -95,60 +95,153 @@ class SyncService:
         return SyncExportResponse(movements=movements, movement_details=movement_details)
 
     @staticmethod
+    def sync_period(db: Session, period_data, sheet_id: str) -> tuple[Period, bool]:
+        period, created = SyncService._get_or_create_period(db=db, period_data=period_data, sheet_id=sheet_id)
+        return period, created
+
+    @staticmethod
+    def ensure_clients(db: Session, names: Iterable[str]) -> tuple[int, int, dict[str, UUID]]:
+        normalized_to_clean = SyncService._clean_names_map(names)
+        if not normalized_to_clean:
+            return 0, 0, {}
+
+        normalized_to_id, created = SyncService._get_or_create_entities_map(
+            db=db,
+            model=Client,
+            normalized_to_clean=normalized_to_clean,
+        )
+        return len(normalized_to_clean), created, normalized_to_id
+
+    @staticmethod
+    def upsert_prices(db: Session, prices: Iterable, client_name_to_id: dict[str, UUID] | None = None) -> tuple[int, int]:
+        price_items = list(prices)
+        if not price_items:
+            return 0, 0
+
+        if client_name_to_id is None:
+            client_normalized_to_clean = SyncService._clean_names_map(item.client for item in price_items if item.client)
+            client_name_to_id, _ = SyncService._get_or_create_entities_map(
+                db=db,
+                model=Client,
+                normalized_to_clean=client_normalized_to_clean,
+            )
+
+        rows = SyncService._build_price_rows(price_items, client_name_to_id)
+        if rows:
+            stmt = pg_insert(Price).values(rows)
+            db.execute(
+                stmt.on_conflict_do_update(
+                    constraint="uq_prices_client_product_start_date",
+                    set_={"price": stmt.excluded.price},
+                )
+            )
+        return len(price_items), len(rows)
+
+    @staticmethod
+    def insert_movements(
+        db: Session,
+        period_id: UUID,
+        movements: Iterable,
+        is_first_batch: bool,
+    ) -> tuple[int, int, int]:
+        deleted_count = 0
+        if is_first_batch:
+            deleted_count = (
+                db.query(Movement)
+                .filter(Movement.period_id == period_id, Movement.source == "sheet")
+                .delete(synchronize_session=False)
+            )
+
+        movement_items = list(movements)
+        if not movement_items:
+            return 0, 0, deleted_count
+
+        movement_rows: list[dict] = []
+        detail_rows: list[dict] = []
+        for item in movement_items:
+            movement_id = uuid4()
+            movement_rows.append(
+                {
+                    "id": movement_id,
+                    "period_id": period_id,
+                    "date": item.date,
+                    "type": item.type,
+                    "client_id": item.client_id,
+                    "employee_id": item.employee_id,
+                    "amount": item.amount,
+                    "description": item.description,
+                    "source": "sheet",
+                    "sheet_id": item.sheet_id,
+                    "sheet_tab": item.sheet_tab,
+                    "row_number": item.row_number,
+                }
+            )
+
+            for detail in item.details:
+                detail_rows.append(
+                    {
+                        "id": uuid4(),
+                        "movement_id": movement_id,
+                        "type": detail.type,
+                        "product_id": detail.product_id,
+                        "employee_id": detail.employee_id,
+                        "quantity": detail.quantity,
+                        "unit_price": detail.unit_price,
+                        "subtotal": detail.subtotal,
+                    }
+                )
+
+        if movement_rows:
+            db.execute(insert(Movement), movement_rows)
+        if detail_rows:
+            db.execute(insert(MovementDetail), detail_rows)
+
+        return len(movement_items), len(movement_rows), deleted_count
+
+    @staticmethod
     def import_sheet(db: Session, data: SyncImportRequest) -> SyncImportResponse:
         errors: list[SyncImportErrorItem] = []
         imported_count = 0
-        deleted_count = 0
 
         try:
-            period = SyncService._get_or_create_period(db, data)
-            if data.is_first_batch:
-                deleted_count = (
-                    db.query(Movement)
-                    .filter(Movement.period_id == period.id, Movement.source == "sheet")
-                    .delete(synchronize_session=False)
-                )
+            period, _ = SyncService.sync_period(db=db, period_data=data.period, sheet_id=data.sheet_id)
 
-            all_client_names = {
-                m.client
-                for m in data.movements
-                if m.client
-            }
+            all_client_names = {m.client for m in data.movements if m.client}
             all_client_names.update(p.client for p in data.prices if p.client)
+            _, _, client_name_to_id = SyncService.ensure_clients(db=db, names=all_client_names)
 
-            client_name_to_id = SyncService._get_or_create_entities_map(
-                db=db,
-                model=Client,
-                raw_names=all_client_names,
-            )
-            employee_name_to_id = SyncService._get_or_create_entities_map(
+            employee_name_to_id, _ = SyncService._get_or_create_entities_map(
                 db=db,
                 model=Employee,
-                raw_names=(
+                normalized_to_clean=SyncService._clean_names_map(
                     name
                     for movement in data.movements
                     for name in [movement.employee, *(d.employee for d in movement.details if d.employee)]
                     if name
                 ),
             )
-            product_name_to_id = SyncService._get_or_create_entities_map(
+            product_name_to_id, _ = SyncService._get_or_create_entities_map(
                 db=db,
                 model=Product,
-                raw_names=(
+                normalized_to_clean=SyncService._clean_names_map(
                     d.product
                     for movement in data.movements
                     for d in movement.details
                     if d.product
                 ),
             )
-            SyncService._upsert_prices(
-                db=db,
-                prices=data.prices,
-                client_name_to_id=client_name_to_id,
-            )
+
+            SyncService.upsert_prices(db=db, prices=data.prices, client_name_to_id=client_name_to_id)
 
             movement_rows: list[dict] = []
-            movement_details_by_index: dict[int, list[dict]] = {}
+            all_detail_rows: list[dict] = []
+            deleted_count = 0
+            if data.is_first_batch:
+                deleted_count = (
+                    db.query(Movement)
+                    .filter(Movement.period_id == period.id, Movement.source == "sheet")
+                    .delete(synchronize_session=False)
+                )
 
             for index, movement_data in enumerate(data.movements, start=1):
                 movement_id = uuid4()
@@ -176,7 +269,6 @@ class SyncService:
                         }
                     )
 
-                    detail_rows: list[dict] = []
                     for detail_data in movement_data.details:
                         product_id = None
                         employee_id = None
@@ -194,7 +286,7 @@ class SyncService:
                                 )
                             employee_id = employee_name_to_id.get(SyncService._normalize_name(employee_name))
 
-                        detail_rows.append(
+                        all_detail_rows.append(
                             {
                                 "id": uuid4(),
                                 "movement_id": movement_id,
@@ -207,20 +299,12 @@ class SyncService:
                             }
                         )
 
-                    movement_details_by_index[index] = detail_rows
                     imported_count += 1
                 except Exception as exc:
                     errors.append(SyncImportErrorItem(movement_index=index, message=str(exc)))
 
             if movement_rows:
                 db.execute(insert(Movement), movement_rows)
-
-            all_detail_rows: list[dict] = []
-            for index in range(1, len(data.movements) + 1):
-                detail_rows = movement_details_by_index.get(index)
-                if detail_rows:
-                    all_detail_rows.extend(detail_rows)
-
             if all_detail_rows:
                 db.execute(insert(MovementDetail), all_detail_rows)
 
@@ -239,86 +323,74 @@ class SyncService:
         )
 
     @staticmethod
-    def _upsert_prices(
-        db: Session,
-        prices: Iterable,
-        client_name_to_id: dict[str, UUID],
-    ) -> None:
-        price_rows: list[dict] = []
+    def _build_price_rows(prices: list, client_name_to_id: dict[str, UUID]) -> list[dict]:
+        dedup_map: dict[tuple, dict] = {}
         for price_data in prices:
             normalized_client = SyncService._normalize_name(price_data.client)
             client_id = client_name_to_id.get(normalized_client)
             if client_id is None:
                 continue
             normalized_product = SyncService._normalize_name(price_data.product)
-            price_rows.append(
-                {
-                    "id": uuid4(),
-                    "client_id": client_id,
-                    "product": normalized_product,
-                    "price": price_data.price,
-                    "start_date": price_data.start_date,
-                }
-            )
-
-        if not price_rows:
-            return
-
-        stmt = pg_insert(Price).values(price_rows)
-        upsert_stmt = stmt.on_conflict_do_update(
-            constraint="uq_prices_client_product_start_date",
-            set_={"price": stmt.excluded.price},
-        )
-        db.execute(upsert_stmt)
+            key = (client_id, normalized_product, price_data.start_date)
+            dedup_map[key] = {
+                "id": uuid4(),
+                "client_id": client_id,
+                "product": normalized_product,
+                "price": price_data.price,
+                "start_date": price_data.start_date,
+            }
+        return list(dedup_map.values())
 
     @staticmethod
-    def _get_or_create_period(db: Session, data: SyncImportRequest) -> Period:
+    def _get_or_create_period(db: Session, period_data, sheet_id: str) -> tuple[Period, bool]:
         period = (
             db.query(Period)
             .filter(
-                Period.year == data.period.year,
-                Period.month == data.period.month,
+                Period.year == period_data.year,
+                Period.month == period_data.month,
             )
             .first()
         )
         if period is not None:
-            period.name = data.period.name
-            period.start_date = data.period.start_date
-            period.end_date = data.period.end_date
-            period.sheet_id = data.sheet_id
-            return period
+            period.name = period_data.name
+            period.start_date = period_data.start_date
+            period.end_date = period_data.end_date
+            period.sheet_id = sheet_id
+            return period, False
 
         period = Period(
-            year=data.period.year,
-            month=data.period.month,
-            name=data.period.name,
-            start_date=data.period.start_date,
-            end_date=data.period.end_date,
-            sheet_id=data.sheet_id,
+            year=period_data.year,
+            month=period_data.month,
+            name=period_data.name,
+            start_date=period_data.start_date,
+            end_date=period_data.end_date,
+            sheet_id=sheet_id,
         )
         db.add(period)
         db.flush()
-        return period
+        return period, True
 
     @staticmethod
     def _normalize_name(name: str) -> str:
         return " ".join(name.strip().split()).lower()
 
     @staticmethod
-    def _get_or_create_entities_map(
-        db: Session,
-        model: type[Client] | type[Employee] | type[Product],
-        raw_names: Iterable[str],
-    ) -> dict[str, UUID]:
+    def _clean_names_map(raw_names: Iterable[str]) -> dict[str, str]:
         normalized_to_clean: dict[str, str] = {}
         for raw_name in raw_names:
             clean_name = " ".join(raw_name.strip().split())
-            if not clean_name:
-                continue
-            normalized_to_clean[SyncService._normalize_name(clean_name)] = clean_name
+            if clean_name:
+                normalized_to_clean[SyncService._normalize_name(clean_name)] = clean_name
+        return normalized_to_clean
 
+    @staticmethod
+    def _get_or_create_entities_map(
+        db: Session,
+        model: type[Client] | type[Employee] | type[Product],
+        normalized_to_clean: dict[str, str],
+    ) -> tuple[dict[str, UUID], int]:
         if not normalized_to_clean:
-            return {}
+            return {}, 0
 
         normalized_names = list(normalized_to_clean.keys())
         existing_entities = db.query(model).filter(func.lower(model.name).in_(normalized_names)).all()
@@ -339,4 +411,4 @@ class SyncService:
             for entity in inserted_entities:
                 normalized_to_id[SyncService._normalize_name(entity.name)] = entity.id
 
-        return normalized_to_id
+        return normalized_to_id, len(missing_names)
