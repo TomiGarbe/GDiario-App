@@ -11,6 +11,7 @@ from app.core.db import Base
 
 if TYPE_CHECKING:
     from app.models.movement import Movement
+    from app.models.price import Price
 
 
 class Client(Base):
@@ -21,3 +22,4 @@ class Client(Base):
     is_special: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     movements: Mapped[list["Movement"]] = relationship("Movement", back_populates="client")
+    prices: Mapped[list["Price"]] = relationship("Price", back_populates="client", cascade="all, delete-orphan")

@@ -63,6 +63,8 @@ class SyncImportRequest(BaseModel):
     sheet_id: str = Field(..., min_length=1, max_length=255)
     period: SyncPeriodPayload
     movements: list[SyncMovementPayload] = Field(default_factory=list)
+    prices: list["SyncPricePayload"] = Field(default_factory=list)
+    is_first_batch: bool = True
 
     @field_validator("sheet_id")
     @classmethod
@@ -76,6 +78,21 @@ class SyncImportRequest(BaseModel):
 class SyncImportErrorItem(BaseModel):
     movement_index: int
     message: str
+
+
+class SyncPricePayload(BaseModel):
+    client: str = Field(..., min_length=1, max_length=120)
+    product: str = Field(..., min_length=1, max_length=120)
+    price: Decimal
+    start_date: date
+
+    @field_validator("client", "product")
+    @classmethod
+    def validate_required_names(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("value cannot be empty")
+        return clean
 
 
 class SyncImportResponse(BaseModel):
@@ -113,3 +130,61 @@ class SyncExportMovementDetailItem(BaseModel):
 class SyncExportResponse(BaseModel):
     movements: list[SyncExportMovementItem]
     movement_details: list[SyncExportMovementDetailItem]
+
+
+class SyncClientsRequest(BaseModel):
+    names: list[str] = Field(default_factory=list)
+
+
+class SyncClientsResponse(BaseModel):
+    received: int
+    created: int
+
+
+class SyncPricesRequest(BaseModel):
+    prices: list[SyncPricePayload] = Field(default_factory=list)
+
+
+class SyncPricesResponse(BaseModel):
+    received: int
+    upserted: int
+
+
+class SyncMovementDetailByIdPayload(BaseModel):
+    type: Literal["producto", "empleado", "gasto"]
+    product_id: UUID | None = None
+    employee_id: UUID | None = None
+    quantity: Decimal | None = None
+    unit_price: Decimal | None = None
+    subtotal: Decimal | None = None
+
+
+class SyncMovementByIdPayload(BaseModel):
+    period_id: UUID
+    date: date
+    type: Literal["compra", "venta", "gasto", "pago", "sueldo"]
+    client_id: UUID | None = None
+    employee_id: UUID | None = None
+    amount: Decimal
+    description: str | None = Field(default=None, max_length=500)
+    sheet_id: str | None = Field(default=None, max_length=255)
+    sheet_tab: str | None = Field(default=None, max_length=120)
+    row_number: int | None = None
+    details: list[SyncMovementDetailByIdPayload] = Field(default_factory=list)
+
+    @field_validator("description", "sheet_id", "sheet_tab")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        clean = value.strip()
+        return clean or None
+
+
+class SyncMovementsRequest(BaseModel):
+    movements: list[SyncMovementByIdPayload] = Field(default_factory=list)
+
+
+class SyncMovementsResponse(BaseModel):
+    received: int
+    inserted: int

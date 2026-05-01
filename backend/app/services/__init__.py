@@ -4,6 +4,9 @@ from app.services.client_service import (
     ClientService,
 )
 from app.services.sync_service import SyncImportError, SyncService
+from app.services.sync_clients_service import SyncClientsService
+from app.services.sync_movements_service import SyncMovementsService
+from app.services.sync_prices_service import SyncPricesService
 
 __all__ = [
     "ClientService",
@@ -11,4 +14,7 @@ __all__ = [
     "ClientNotFoundError",
     "SyncService",
     "SyncImportError",
+    "SyncClientsService",
+    "SyncPricesService",
+    "SyncMovementsService",
 ]

@@ -8,6 +8,14 @@ from app.schemas.movement import (
     MovementUpdate,
 )
 from app.schemas.sync import SyncExportResponse, SyncImportRequest, SyncImportResponse
+from app.schemas.sync import (
+    SyncClientsRequest,
+    SyncClientsResponse,
+    SyncMovementsRequest,
+    SyncMovementsResponse,
+    SyncPricesRequest,
+    SyncPricesResponse,
+)
 
 __all__ = [
     "ClientBase",
@@ -22,4 +30,10 @@ __all__ = [
     "SyncExportResponse",
     "SyncImportRequest",
     "SyncImportResponse",
+    "SyncClientsRequest",
+    "SyncClientsResponse",
+    "SyncPricesRequest",
+    "SyncPricesResponse",
+    "SyncMovementsRequest",
+    "SyncMovementsResponse",
 ]
