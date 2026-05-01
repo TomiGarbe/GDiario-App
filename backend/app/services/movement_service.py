@@ -5,7 +5,6 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.client import Client
@@ -15,6 +14,7 @@ from app.models.movement_detail import MovementDetail
 from app.models.period import Period
 from app.models.product import Product
 from app.schemas.movement import MovementCreate, MovementUpdate
+from app.utils.name_normalization import normalize_name
 
 TWOPLACES = Decimal("0.01")
 
@@ -284,7 +284,7 @@ class MovementService:
 
     @staticmethod
     def _normalize_name(name: str) -> str:
-        return " ".join(name.strip().split()).lower()
+        return normalize_name(name)
 
     @staticmethod
     def _get_or_create_entity(
@@ -297,12 +297,15 @@ class MovementService:
         if normalized_name in cache:
             return cache[normalized_name]
 
-        existing = db.query(model).filter(func.lower(model.name) == normalized_name).first()
+        existing = db.query(model).filter(model.normalized_name == normalized_name).first()
         if existing is not None:
             cache[normalized_name] = existing
             return existing
 
-        entity = model(name=" ".join(raw_name.strip().split()))
+        entity = model(
+            name=" ".join(raw_name.strip().split()),
+            normalized_name=normalized_name,
+        )
         db.add(entity)
         db.flush()
         cache[normalized_name] = entity

@@ -4,7 +4,6 @@ from collections.abc import Iterable
 from uuid import UUID
 from uuid import uuid4
 
-from sqlalchemy import func
 from sqlalchemy import insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -22,6 +21,7 @@ from app.schemas.sync import (
     SyncExportMovementItem,
     SyncExportResponse,
 )
+from app.utils.name_normalization import normalize_name
 
 
 class SyncImportError(Exception):
@@ -126,7 +126,13 @@ class SyncService:
                 normalized_to_clean=client_normalized_to_clean,
             )
 
-        rows = SyncService._build_price_rows(price_items, client_name_to_id)
+        product_name_to_id, _ = SyncService._get_or_create_entities_map(
+            db=db,
+            model=Product,
+            normalized_to_clean=SyncService._clean_names_map(item.product for item in price_items if item.product),
+        )
+
+        rows = SyncService._build_price_rows(price_items, client_name_to_id, product_name_to_id)
         if rows:
             stmt = pg_insert(Price).values(rows)
             db.execute(
@@ -323,7 +329,11 @@ class SyncService:
         )
 
     @staticmethod
-    def _build_price_rows(prices: list, client_name_to_id: dict[str, UUID]) -> list[dict]:
+    def _build_price_rows(
+        prices: list,
+        client_name_to_id: dict[str, UUID],
+        product_name_to_id: dict[str, UUID],
+    ) -> list[dict]:
         dedup_map: dict[tuple, dict] = {}
         for price_data in prices:
             normalized_client = SyncService._normalize_name(price_data.client)
@@ -331,11 +341,14 @@ class SyncService:
             if client_id is None:
                 continue
             normalized_product = SyncService._normalize_name(price_data.product)
-            key = (client_id, normalized_product, price_data.start_date)
+            product_id = product_name_to_id.get(normalized_product)
+            if product_id is None:
+                continue
+            key = (client_id, product_id, price_data.start_date)
             dedup_map[key] = {
                 "id": uuid4(),
                 "client_id": client_id,
-                "product": normalized_product,
+                "product_id": product_id,
                 "price": price_data.price,
                 "start_date": price_data.start_date,
             }
@@ -372,7 +385,7 @@ class SyncService:
 
     @staticmethod
     def _normalize_name(name: str) -> str:
-        return " ".join(name.strip().split()).lower()
+        return normalize_name(name)
 
     @staticmethod
     def _clean_names_map(raw_names: Iterable[str]) -> dict[str, str]:
@@ -393,10 +406,10 @@ class SyncService:
             return {}, 0
 
         normalized_names = list(normalized_to_clean.keys())
-        existing_entities = db.query(model).filter(func.lower(model.name).in_(normalized_names)).all()
+        existing_entities = db.query(model).filter(model.normalized_name.in_(normalized_names)).all()
 
         normalized_to_id: dict[str, UUID] = {
-            SyncService._normalize_name(entity.name): entity.id for entity in existing_entities
+            entity.normalized_name: entity.id for entity in existing_entities
         }
 
         missing_names = [
@@ -405,10 +418,13 @@ class SyncService:
             if normalized_name not in normalized_to_id
         ]
         if missing_names:
-            db.execute(insert(model), [{"name": name} for name in missing_names])
+            db.execute(
+                insert(model),
+                [{"name": name, "normalized_name": SyncService._normalize_name(name)} for name in missing_names],
+            )
             db.flush()
-            inserted_entities = db.query(model).filter(func.lower(model.name).in_(normalized_names)).all()
+            inserted_entities = db.query(model).filter(model.normalized_name.in_(normalized_names)).all()
             for entity in inserted_entities:
-                normalized_to_id[SyncService._normalize_name(entity.name)] = entity.id
+                normalized_to_id[entity.normalized_name] = entity.id
 
         return normalized_to_id, len(missing_names)
