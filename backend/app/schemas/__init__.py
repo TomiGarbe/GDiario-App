@@ -1,10 +1,15 @@
 from app.schemas.client import ClientBase, ClientCreate, ClientResponse
 from app.schemas.movement import (
     BalanceResponse,
+    EntitiesOut,
+    MovementFlatOut,
     MovementCreate,
     MovementDetailCreate,
     MovementDetailResponse,
+    MovementItemOut,
+    MovementOut,
     MovementResponse,
+    MovementSalaryOut,
     MovementUpdate,
 )
 from app.schemas.sync import SyncExportResponse, SyncImportRequest, SyncImportResponse
@@ -24,10 +29,15 @@ __all__ = [
     "ClientCreate",
     "ClientResponse",
     "BalanceResponse",
+    "EntitiesOut",
+    "MovementFlatOut",
     "MovementCreate",
     "MovementDetailCreate",
     "MovementDetailResponse",
+    "MovementItemOut",
+    "MovementOut",
     "MovementResponse",
+    "MovementSalaryOut",
     "MovementUpdate",
     "SyncExportResponse",
     "SyncImportRequest",

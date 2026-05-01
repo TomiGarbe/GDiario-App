@@ -43,7 +43,7 @@ class SyncMovementDetailPayload(BaseModel):
 
 class SyncMovementPayload(BaseModel):
     date: date
-    type: Literal["compra", "venta", "gasto", "pago", "sueldo"]
+    type: Literal["compra", "venta", "gasto", "pago", "sueldo", "entrega_dinero", "pago_cliente"]
     client: str | None = Field(default=None, max_length=120)
     employee: str | None = Field(default=None, max_length=120)
     amount: Decimal
@@ -171,7 +171,7 @@ class SyncMovementDetailByIdPayload(BaseModel):
 
 class SyncMovementByIdPayload(BaseModel):
     date: date
-    type: Literal["compra", "venta", "gasto", "pago", "sueldo"]
+    type: Literal["compra", "venta", "gasto", "pago", "sueldo", "entrega_dinero", "pago_cliente"]
     client_id: UUID | None = None
     employee_id: UUID | None = None
     amount: Decimal
@@ -200,3 +200,89 @@ class SyncMovementsResponse(BaseModel):
     received: int
     inserted: int
     deleted_previous_sheet_movements: int
+
+
+class MovementSyncPayload(BaseModel):
+    id: UUID
+    period_id: UUID
+    date: date
+    type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
+    amount: Decimal
+    description: str | None = Field(default=None, max_length=500)
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        clean = value.strip()
+        return clean or None
+
+
+class MovementItemSyncPayload(BaseModel):
+    id: UUID
+    movement_id: UUID
+    client_name: str = Field(..., min_length=1, max_length=120)
+    product_name: str = Field(..., min_length=1, max_length=120)
+    quantity: Decimal
+    unit_price: Decimal
+    subtotal: Decimal
+
+    @field_validator("client_name", "product_name")
+    @classmethod
+    def validate_names(cls, value: str) -> str:
+        clean = " ".join(value.strip().split())
+        if not clean:
+            raise ValueError("value cannot be empty")
+        return clean
+
+
+class MovementSalarySyncPayload(BaseModel):
+    id: UUID
+    movement_id: UUID
+    employee_name: str = Field(..., min_length=1, max_length=120)
+    subtotal: Decimal
+
+    @field_validator("employee_name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        clean = " ".join(value.strip().split())
+        if not clean:
+            raise ValueError("employee_name cannot be empty")
+        return clean
+
+
+class MovementClientPaymentSyncPayload(BaseModel):
+    id: UUID
+    movement_id: UUID
+    client_name: str = Field(..., min_length=1, max_length=120)
+    subtotal: Decimal
+
+    @field_validator("client_name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        clean = " ".join(value.strip().split())
+        if not clean:
+            raise ValueError("client_name cannot be empty")
+        return clean
+
+
+class SyncBatchResult(BaseModel):
+    received: int
+    inserted: int
+    updated: int
+    deleted: int
+
+
+class SyncFullRequest(BaseModel):
+    movements: list[MovementSyncPayload] = Field(default_factory=list)
+    movement_items: list[MovementItemSyncPayload] = Field(default_factory=list)
+    movement_salaries: list[MovementSalarySyncPayload] = Field(default_factory=list)
+    movement_client_payments: list[MovementClientPaymentSyncPayload] = Field(default_factory=list)
+
+
+class SyncFullResponse(BaseModel):
+    movements: SyncBatchResult
+    movement_items: SyncBatchResult
+    movement_salaries: SyncBatchResult
+    movement_client_payments: SyncBatchResult

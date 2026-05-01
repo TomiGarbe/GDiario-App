@@ -3,14 +3,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, String, text
+from sqlalchemy import Boolean, Index, String, func, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 
 if TYPE_CHECKING:
-    from app.models.movement import Movement
+    from app.models.movement_client_payment import MovementClientPayment
+    from app.models.movement_item import MovementItem
     from app.models.price import Price
 
 
@@ -22,9 +23,16 @@ class Client(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
-    normalized_name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
     is_special: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
-    movements: Mapped[list["Movement"]] = relationship("Movement", back_populates="client")
+    movement_items: Mapped[list["MovementItem"]] = relationship("MovementItem", back_populates="client")
+    movement_client_payments: Mapped[list["MovementClientPayment"]] = relationship(
+        "MovementClientPayment",
+        back_populates="client",
+    )
     prices: Mapped[list["Price"]] = relationship("Price", back_populates="client", cascade="all, delete-orphan")
+
+
+Index("uq_clients_name_ci", func.lower(Client.name), unique=True)
+Index("ix_clients_name", Client.name)

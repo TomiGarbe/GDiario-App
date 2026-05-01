@@ -1,99 +1,224 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import Select, case, func, select
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.db import get_db
-from app.schemas.movement import BalanceResponse, MovementCreate, MovementDetailResponse, MovementResponse, MovementUpdate
-from app.services.movement_service import InvalidMovementError, MovementNotFoundError, MovementService
+from app.models.client import Client
+from app.models.employee import Employee
+from app.models.movement import Movement, MovementType
+from app.models.movement_client_payment import MovementClientPayment
+from app.models.movement_item import MovementItem
+from app.models.movement_salary import MovementSalary
+from app.models.product import Product
+from app.schemas.movement import (
+    BalanceOut,
+    EntitiesOut,
+    MovementClientPaymentOut,
+    MovementFlatOut,
+    MovementItemOut,
+    MovementOut,
+    MovementSalaryOut,
+)
 
 router = APIRouter(prefix="/movements", tags=["movements"])
 
 
-def _serialize_movement(movement) -> MovementResponse:
-    return MovementResponse(
-        id=movement.id,
-        date=movement.date,
-        type=movement.type,
-        client=movement.client.name if movement.client else None,
-        employee=movement.employee.name if movement.employee else None,
-        amount=movement.amount,
-        description=movement.description,
-        details=[
-            MovementDetailResponse(
-                id=detail.id,
-                type=detail.type,
-                product=detail.product.name if detail.product else None,
-                employee=detail.employee.name if detail.employee else None,
-                quantity=detail.quantity,
-                unit_price=detail.unit_price,
-                subtotal=detail.subtotal,
-            )
-            for detail in movement.details
-        ],
+def get_signed_amount(movement: Movement) -> Decimal:
+    if movement.type == MovementType.VENTA:
+        return movement.amount
+    return -movement.amount
+
+
+def _build_movements_filters(
+    *,
+    period_id: UUID | None,
+    date_from: date | None,
+    date_to: date | None,
+    movement_type: MovementType | None,
+) -> list:
+    filters = []
+    if period_id is not None:
+        filters.append(Movement.period_id == period_id)
+    if date_from is not None:
+        filters.append(Movement.date >= date_from)
+    if date_to is not None:
+        filters.append(Movement.date <= date_to)
+    if movement_type is not None:
+        filters.append(Movement.type == movement_type)
+    return filters
+
+
+def _build_movements_query(
+    *,
+    period_id: UUID | None,
+    date_from: date | None,
+    date_to: date | None,
+    movement_type: MovementType | None,
+) -> Select[tuple[Movement]]:
+    stmt = (
+        select(Movement)
+        .options(
+            selectinload(Movement.items).selectinload(MovementItem.client),
+            selectinload(Movement.items).selectinload(MovementItem.product),
+            selectinload(Movement.salaries).selectinload(MovementSalary.employee),
+            selectinload(Movement.client_payments).selectinload(MovementClientPayment.client),
+        )
+        .order_by(Movement.date.asc())
     )
+    return stmt.where(*_build_movements_filters(
+        period_id=period_id,
+        date_from=date_from,
+        date_to=date_to,
+        movement_type=movement_type,
+    ))
 
 
-@router.get("/", response_model=list[MovementResponse])
-def get_movements(db: Session = Depends(get_db)) -> list[MovementResponse]:
-    movements = MovementService.get_movements(db)
-    return [_serialize_movement(movement) for movement in movements]
-
-
-@router.post("/", response_model=MovementResponse, status_code=status.HTTP_201_CREATED)
-def create_movement(data: MovementCreate, db: Session = Depends(get_db)) -> MovementResponse:
-    try:
-        movement = MovementService.create_movement(db, data)
-    except InvalidMovementError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-
-    return _serialize_movement(movement)
-
-
-@router.patch("/{movement_id}", response_model=MovementResponse)
-def patch_movement(movement_id: UUID, data: MovementUpdate, db: Session = Depends(get_db)) -> MovementResponse:
-    try:
-        movement = MovementService.update_movement(db, movement_id, data)
-    except MovementNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except InvalidMovementError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-
-    return _serialize_movement(movement)
-
-
-@router.get("/balance", response_model=BalanceResponse)
-def get_balance(
-    date_param: date = Query(alias="date"),
+@router.get("/", response_model=list[MovementOut])
+def get_movements(
+    period_id: UUID | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    type: MovementType | None = Query(default=None),
     db: Session = Depends(get_db),
-) -> BalanceResponse:
-    total_debe, total_haber, balance = MovementService.get_balance_until_date(db, date_param)
-    return BalanceResponse(
-        date=date_param,
-        total_debe=total_debe,
-        total_haber=total_haber,
-        balance=balance,
+) -> list[MovementOut]:
+    movements = db.scalars(
+        _build_movements_query(
+            period_id=period_id,
+            date_from=date_from,
+            date_to=date_to,
+            movement_type=type,
+        )
+    ).all()
+
+    return [
+        MovementOut(
+            id=movement.id,
+            date=movement.date,
+            type=movement.type.value if isinstance(movement.type, MovementType) else str(movement.type),
+            amount=movement.amount,
+            description=movement.description,
+            items=[
+                MovementItemOut(
+                    client=item.client.name,
+                    product=item.product.name,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                    subtotal=item.subtotal,
+                )
+                for item in movement.items
+            ],
+            salaries=[
+                MovementSalaryOut(
+                    employee=salary.employee.name,
+                    subtotal=salary.subtotal,
+                )
+                for salary in movement.salaries
+            ],
+            client_payments=[
+                MovementClientPaymentOut(
+                    client=client_payment.client.name,
+                    subtotal=client_payment.subtotal,
+                )
+                for client_payment in movement.client_payments
+            ],
+        )
+        for movement in movements
+    ]
+
+
+@router.get("/flat", response_model=list[MovementFlatOut])
+def get_movements_flat(
+    period_id: UUID | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    type: MovementType | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[MovementFlatOut]:
+    movements = db.scalars(
+        _build_movements_query(
+            period_id=period_id,
+            date_from=date_from,
+            date_to=date_to,
+            movement_type=type,
+        )
+    ).all()
+
+    rows: list[MovementFlatOut] = []
+    for movement in movements:
+        rows.extend(
+            MovementFlatOut(
+                date=movement.date,
+                type=movement.type.value if isinstance(movement.type, MovementType) else str(movement.type),
+                client=item.client.name,
+                product=item.product.name,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                subtotal=item.subtotal,
+                amount=movement.amount,
+            )
+            for item in movement.items
+        )
+        rows.extend(
+            MovementFlatOut(
+                date=movement.date,
+                type=movement.type.value if isinstance(movement.type, MovementType) else str(movement.type),
+                employee=salary.employee.name,
+                subtotal=salary.subtotal,
+                amount=movement.amount,
+            )
+            for salary in movement.salaries
+        )
+        rows.extend(
+            MovementFlatOut(
+                date=movement.date,
+                type=movement.type.value if isinstance(movement.type, MovementType) else str(movement.type),
+                client=client_payment.client.name,
+                subtotal=client_payment.subtotal,
+                amount=movement.amount,
+            )
+            for client_payment in movement.client_payments
+        )
+
+    return rows
+
+
+@router.get("/entities", response_model=EntitiesOut)
+def get_entities(db: Session = Depends(get_db)) -> EntitiesOut:
+    clients = db.scalars(select(Client.name).order_by(Client.name.asc())).all()
+    products = db.scalars(select(Product.name).order_by(Product.name.asc())).all()
+    employees = db.scalars(select(Employee.name).order_by(Employee.name.asc())).all()
+    return EntitiesOut(
+        clients=clients,
+        products=products,
+        employees=employees,
     )
 
 
-@router.get("/{movement_id}", response_model=MovementResponse)
-def get_movement_by_id(movement_id: UUID, db: Session = Depends(get_db)) -> MovementResponse:
-    try:
-        movement = MovementService.get_movement_by_id(db, movement_id)
-    except MovementNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-    return _serialize_movement(movement)
-
-
-@router.delete("/{movement_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_movement(movement_id: UUID, db: Session = Depends(get_db)) -> Response:
-    try:
-        MovementService.delete_movement(db, movement_id)
-    except MovementNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+@router.get("/balance", response_model=BalanceOut)
+def get_balance(
+    period_id: UUID | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    type: MovementType | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> BalanceOut:
+    signed_amount = case(
+        (Movement.type == MovementType.VENTA, Movement.amount),
+        else_=-Movement.amount,
+    )
+    stmt = select(func.coalesce(func.sum(signed_amount), 0)).where(
+        *_build_movements_filters(
+            period_id=period_id,
+            date_from=date_from,
+            date_to=date_to,
+            movement_type=type,
+        )
+    )
+    balance = db.scalar(stmt)
+    return BalanceOut(balance=Decimal(balance))

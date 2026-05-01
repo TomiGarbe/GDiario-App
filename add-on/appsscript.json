@@ -1,0 +1,38 @@
+{
+  "timeZone": "America/Argentina/Cordoba",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/script.scriptapp",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "urlFetchWhitelist": [
+    "https://script.google.com/*",
+    "https://script.googleapis.com/*",
+    "https://gdiario-app.onrender.com/",
+    "https://gdiario-app.onrender.com/api/sync/export",
+    "https://gdiario-app.onrender.com/api/sync/import-sheet"
+  ],
+  "addOns": {
+    "common": {
+      "name": "Sistema Detalles Clientes",
+      "logoUrl": "https://www.gstatic.com/images/branding/product/1x/sheets_48dp.png"
+    },
+    "sheets": {
+      "homepageTrigger": {
+        "runFunction": "homepage"
+      }
+    }
+  },
+  "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Drive",
+        "version": "v3",
+        "serviceId": "drive"
+      }
+    ]
+  }
+}

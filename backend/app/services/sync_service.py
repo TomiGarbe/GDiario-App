@@ -1,484 +1,208 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-import logging
 from uuid import UUID
-from uuid import uuid4
 
-from sqlalchemy import insert
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.client import Client
 from app.models.employee import Employee
 from app.models.movement import Movement
-from app.models.movement_detail import MovementDetail
-from app.models.period import Period
-from app.models.price import Price
+from app.models.movement import MovementType
 from app.models.product import Product
-from app.schemas.sync import SyncImportErrorItem, SyncImportRequest, SyncImportResponse
-from app.schemas.sync import (
-    SyncExportMovementDetailItem,
-    SyncExportMovementItem,
-    SyncExportResponse,
-)
-from app.utils.name_normalization import normalize_name
-
-
-class SyncImportError(Exception):
-    pass
-
-
-logger = logging.getLogger(__name__)
+from app.repositories.movement_repository import MovementRepository
+from app.services.validation_service import ValidationService
+from app.utils.name_resolver import normalize_entity_name, resolve_or_create_entities
 
 
 class SyncService:
     @staticmethod
-    def export_data(db: Session) -> SyncExportResponse:
-        movement_rows = (
-            db.query(
-                Movement.id,
-                Movement.date,
-                Movement.type,
-                Client.name.label("client"),
-                Employee.name.label("employee"),
-                Movement.amount,
-                Movement.description,
-                Movement.source,
-            )
-            .outerjoin(Client, Movement.client_id == Client.id)
-            .outerjoin(Employee, Movement.employee_id == Employee.id)
-            .order_by(Movement.date.asc(), Movement.id.asc())
-            .all()
-        )
+    def sync_movements(db: Session, movements: Iterable) -> tuple[int, int, int]:
+        movement_list = list(movements)
+        if not movement_list:
+            return 0, 0, 0
 
-        detail_rows = (
-            db.query(
-                MovementDetail.id,
-                MovementDetail.movement_id,
-                MovementDetail.type,
-                Product.name.label("product"),
-                Employee.name.label("employee"),
-                MovementDetail.quantity,
-                MovementDetail.unit_price,
-                MovementDetail.subtotal,
-            )
-            .outerjoin(Product, MovementDetail.product_id == Product.id)
-            .outerjoin(Employee, MovementDetail.employee_id == Employee.id)
-            .order_by(MovementDetail.movement_id.asc(), MovementDetail.id.asc())
-            .all()
-        )
+        ids = [item.id for item in movement_list]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate movement id in payload")
+        for movement in movement_list:
+            ValidationService.validate_movement_fields(movement)
 
-        movements = [
-            SyncExportMovementItem(
-                id=row.id,
-                date=row.date,
-                type=row.type,
-                client=row.client,
-                employee=row.employee,
-                amount=row.amount,
-                description=row.description,
-                source=row.source,
-            )
-            for row in movement_rows
-        ]
-        movement_details = [
-            SyncExportMovementDetailItem(
-                id=row.id,
-                movement_id=row.movement_id,
-                type=row.type,
-                product=row.product,
-                employee=row.employee,
-                quantity=row.quantity,
-                unit_price=row.unit_price,
-                subtotal=row.subtotal,
-            )
-            for row in detail_rows
-        ]
-
-        return SyncExportResponse(movements=movements, movement_details=movement_details)
-
-    @staticmethod
-    def sync_period(db: Session, period_data, sheet_id: str) -> tuple[Period, bool]:
-        period, created = SyncService._get_or_create_period(db=db, period_data=period_data, sheet_id=sheet_id)
-        return period, created
-
-    @staticmethod
-    def ensure_clients(db: Session, names: Iterable[str]) -> tuple[int, int, dict[str, UUID]]:
-        normalized_to_clean = SyncService._clean_names_map(names)
-        if not normalized_to_clean:
-            return 0, 0, {}
-
-        normalized_to_id, created = SyncService._get_or_create_entities_map(
-            db=db,
-            model=Client,
-            normalized_to_clean=normalized_to_clean,
-        )
-        return len(normalized_to_clean), created, normalized_to_id
-
-    @staticmethod
-    def upsert_prices(db: Session, prices: Iterable, client_name_to_id: dict[str, UUID] | None = None) -> tuple[int, int]:
-        price_items = list(prices)
-        if not price_items:
-            return 0, 0
-
-        if client_name_to_id is None:
-            client_normalized_to_clean = SyncService._clean_names_map(item.client for item in price_items if item.client)
-            client_name_to_id, _ = SyncService._get_or_create_entities_map(
-                db=db,
-                model=Client,
-                normalized_to_clean=client_normalized_to_clean,
-            )
-
-        product_name_to_id, _ = SyncService._get_or_create_entities_map(
-            db=db,
-            model=Product,
-            normalized_to_clean=SyncService._clean_names_map(item.product for item in price_items if item.product),
-        )
-
-        rows = SyncService._build_price_rows(price_items, client_name_to_id, product_name_to_id)
-        if rows:
-            stmt = pg_insert(Price).values(rows)
-            db.execute(
-                stmt.on_conflict_do_update(
-                    constraint="uq_prices_client_product_start_date",
-                    set_={"price": stmt.excluded.price},
-                )
-            )
-        return len(price_items), len(rows)
-
-    @staticmethod
-    def insert_movements(
-        db: Session,
-        period_id: UUID,
-        movements: Iterable,
-        is_first_batch: bool,
-    ) -> tuple[int, int, int]:
-        deleted_count = 0
-        if is_first_batch:
-            deleted_count = (
-                db.query(Movement)
-                .filter(Movement.period_id == period_id, Movement.source == "sheet")
-                .delete(synchronize_session=False)
-            )
-
-        movement_items = list(movements)
-        if not movement_items:
-            return 0, 0, deleted_count
-
-        movement_rows: list[dict] = []
-        detail_rows: list[dict] = []
-        for item in movement_items:
-            movement_id = uuid4()
-            movement_rows.append(
-                {
-                    "id": movement_id,
-                    "period_id": period_id,
-                    "date": item.date,
-                    "type": item.type,
-                    "client_id": item.client_id,
-                    "employee_id": item.employee_id,
-                    "amount": item.amount,
-                    "description": item.description,
-                    "source": "sheet",
-                    "sheet_id": item.sheet_id,
-                    "sheet_tab": item.sheet_tab,
-                    "row_number": item.row_number,
-                }
-            )
-
-            for detail in item.details:
-                detail_rows.append(
-                    {
-                        "id": uuid4(),
-                        "movement_id": movement_id,
-                        "type": detail.type,
-                        "product_id": detail.product_id,
-                        "employee_id": detail.employee_id,
-                        "quantity": detail.quantity,
-                        "unit_price": detail.unit_price,
-                        "subtotal": detail.subtotal,
-                    }
-                )
-
-        if movement_rows:
-            db.execute(insert(Movement), movement_rows)
-        if detail_rows:
-            db.execute(insert(MovementDetail), detail_rows)
-
-        return len(movement_items), len(movement_rows), deleted_count
-
-    @staticmethod
-    def import_sheet(db: Session, data: SyncImportRequest) -> SyncImportResponse:
-        errors: list[SyncImportErrorItem] = []
-        imported_count = 0
-
-        try:
-            period, _ = SyncService.sync_period(db=db, period_data=data.period, sheet_id=data.sheet_id)
-
-            all_client_names = {m.client for m in data.movements if m.client}
-            all_client_names.update(p.client for p in data.prices if p.client)
-            _, _, client_name_to_id = SyncService.ensure_clients(db=db, names=all_client_names)
-
-            employee_name_to_id, _ = SyncService._get_or_create_entities_map(
-                db=db,
-                model=Employee,
-                normalized_to_clean=SyncService._clean_names_map(
-                    name
-                    for movement in data.movements
-                    for name in [movement.employee, *(d.employee for d in movement.details if d.employee)]
-                    if name
-                ),
-            )
-            product_name_to_id, _ = SyncService._get_or_create_entities_map(
-                db=db,
-                model=Product,
-                normalized_to_clean=SyncService._clean_names_map(
-                    d.product
-                    for movement in data.movements
-                    for d in movement.details
-                    if d.product
-                ),
-            )
-
-            logger.debug(
-                "sync.import_sheet maps prepared: clients=%s employees=%s products=%s",
-                len(client_name_to_id),
-                len(employee_name_to_id),
-                len(product_name_to_id),
-            )
-
-            SyncService.upsert_prices(db=db, prices=data.prices, client_name_to_id=client_name_to_id)
-
-            movement_rows: list[dict] = []
-            all_detail_rows: list[dict] = []
-            deleted_count = 0
-            if data.is_first_batch:
-                deleted_count = (
-                    db.query(Movement)
-                    .filter(Movement.period_id == period.id, Movement.source == "sheet")
-                    .delete(synchronize_session=False)
-                )
-
-            for index, movement_data in enumerate(data.movements, start=1):
-                movement_id = uuid4()
-                try:
-                    movement_client_id = SyncService._resolve_required_id(
-                        entity_label="client",
-                        raw_name=movement_data.client,
-                        mapping=client_name_to_id,
-                    )
-                    movement_employee_id = SyncService._resolve_optional_id(
-                        entity_label="employee",
-                        raw_name=movement_data.employee,
-                        mapping=employee_name_to_id,
-                    )
-                    movement_rows.append(
-                        {
-                            "id": movement_id,
-                            "period_id": period.id,
-                            "date": movement_data.date,
-                            "type": movement_data.type,
-                            "client_id": movement_client_id,
-                            "employee_id": movement_employee_id,
-                            "amount": movement_data.amount,
-                            "description": movement_data.description,
-                            "source": "sheet",
-                            "sheet_id": data.sheet_id,
-                        }
-                    )
-
-                    for detail_data in movement_data.details:
-                        product_id = None
-                        employee_id = None
-
-                        if detail_data.type == "producto":
-                            product_id = SyncService._resolve_required_id(
-                                entity_label="product",
-                                raw_name=detail_data.product,
-                                mapping=product_name_to_id,
-                                context="detail.type='producto'",
-                            )
-
-                        if detail_data.type == "empleado":
-                            employee_name = detail_data.employee or movement_data.employee
-                            employee_id = SyncService._resolve_required_id(
-                                entity_label="employee",
-                                raw_name=employee_name,
-                                mapping=employee_name_to_id,
-                                context="detail.type='empleado'",
-                            )
-
-                        all_detail_rows.append(
-                            {
-                                "id": uuid4(),
-                                "movement_id": movement_id,
-                                "type": detail_data.type,
-                                "product_id": product_id,
-                                "employee_id": employee_id,
-                                "quantity": detail_data.quantity,
-                                "unit_price": detail_data.unit_price,
-                                "subtotal": detail_data.subtotal,
-                            }
-                        )
-
-                    imported_count += 1
-                except Exception as exc:
-                    logger.debug("sync.import_sheet movement failed index=%s error=%s", index, exc)
-                    errors.append(SyncImportErrorItem(movement_index=index, message=str(exc)))
-
-            if movement_rows:
-                db.execute(insert(Movement), movement_rows)
-            if all_detail_rows:
-                db.execute(insert(MovementDetail), all_detail_rows)
-
-            db.commit()
-            db.refresh(period)
-        except Exception as exc:
-            db.rollback()
-            raise SyncImportError(f"Failed to import sheet data: {exc}") from exc
-
-        return SyncImportResponse(
-            period_id=period.id,
-            deleted_previous_sheet_movements=deleted_count,
-            imported_movements=imported_count,
-            failed_movements=len(errors),
-            errors=errors,
-        )
-
-    @staticmethod
-    def _build_price_rows(
-        prices: list,
-        client_name_to_id: dict[str, UUID],
-        product_name_to_id: dict[str, UUID],
-    ) -> list[dict]:
-        dedup_map: dict[tuple, dict] = {}
-        for price_data in prices:
-            normalized_client = SyncService._normalize_name(price_data.client)
-            client_id = client_name_to_id.get(normalized_client)
-            if client_id is None:
-                continue
-            normalized_product = SyncService._normalize_name(price_data.product)
-            product_id = product_name_to_id.get(normalized_product)
-            if product_id is None:
-                continue
-            key = (client_id, product_id, price_data.start_date)
-            dedup_map[key] = {
-                "id": uuid4(),
-                "client_id": client_id,
-                "product_id": product_id,
-                "price": price_data.price,
-                "start_date": price_data.start_date,
+        rows = [
+            {
+                "id": item.id,
+                "period_id": item.period_id,
+                "date": item.date,
+                "type": MovementType(item.type),
+                "amount": item.amount,
+                "description": item.description,
             }
-        return list(dedup_map.values())
+            for item in movement_list
+        ]
+
+        inserted, updated = MovementRepository.upsert_movements(db, rows)
+        return len(movement_list), inserted, updated
 
     @staticmethod
-    def _get_or_create_period(db: Session, period_data, sheet_id: str) -> tuple[Period, bool]:
-        period = (
-            db.query(Period)
-            .filter(
-                Period.year == period_data.year,
-                Period.month == period_data.month,
-            )
-            .first()
+    def sync_movement_items(db: Session, items: Iterable) -> tuple[int, int, int]:
+        item_list = list(items)
+        if not item_list:
+            return 0, 0, 0
+
+        ids = [item.id for item in item_list]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate movement_item id in payload")
+
+        movement_ids = {item.movement_id for item in item_list}
+        existing_movement_ids = MovementRepository.existing_movement_ids(db, movement_ids)
+        missing_movement_ids = movement_ids - existing_movement_ids
+        if missing_movement_ids:
+            raise ValueError(f"Some movement_id do not exist: {sorted(str(mid) for mid in missing_movement_ids)}")
+        movement_types = SyncService._get_movement_types(db, movement_ids)
+        for item in item_list:
+            ValidationService.validate_item_fields(item)
+            ValidationService.validate_detail_type_for_movement(movement_types[item.movement_id], "item")
+
+        client_map = resolve_or_create_entities(db, Client, [item.client_name for item in item_list])
+        product_map = resolve_or_create_entities(db, Product, [item.product_name for item in item_list])
+
+        rows = [
+            {
+                "id": item.id,
+                "movement_id": item.movement_id,
+                "client_id": client_map[normalize_entity_name(item.client_name)],
+                "product_id": product_map[normalize_entity_name(item.product_name)],
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "subtotal": item.subtotal,
+            }
+            for item in item_list
+        ]
+
+        deleted, inserted = MovementRepository.replace_movement_items(db, movement_ids, rows)
+        return len(item_list), inserted, deleted
+
+    @staticmethod
+    def sync_movement_salaries(db: Session, salaries: Iterable) -> tuple[int, int, int]:
+        salary_list = list(salaries)
+        if not salary_list:
+            return 0, 0, 0
+
+        ids = [item.id for item in salary_list]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate movement_salary id in payload")
+
+        movement_ids = {item.movement_id for item in salary_list}
+        existing_movement_ids = MovementRepository.existing_movement_ids(db, movement_ids)
+        missing_movement_ids = movement_ids - existing_movement_ids
+        if missing_movement_ids:
+            raise ValueError(f"Some movement_id do not exist: {sorted(str(mid) for mid in missing_movement_ids)}")
+        movement_types = SyncService._get_movement_types(db, movement_ids)
+        for item in salary_list:
+            ValidationService.validate_salary_fields(item)
+            ValidationService.validate_detail_type_for_movement(movement_types[item.movement_id], "salary")
+
+        employee_map = resolve_or_create_entities(db, Employee, [item.employee_name for item in salary_list])
+
+        rows = [
+            {
+                "id": item.id,
+                "movement_id": item.movement_id,
+                "employee_id": employee_map[normalize_entity_name(item.employee_name)],
+                "subtotal": item.subtotal,
+            }
+            for item in salary_list
+        ]
+
+        deleted, inserted = MovementRepository.replace_movement_salaries(db, movement_ids, rows)
+        return len(salary_list), inserted, deleted
+
+    @staticmethod
+    def sync_movement_client_payments(db: Session, client_payments: Iterable) -> tuple[int, int, int]:
+        client_payment_list = list(client_payments)
+        if not client_payment_list:
+            return 0, 0, 0
+
+        ids = [item.id for item in client_payment_list]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate movement_client_payment id in payload")
+
+        movement_ids = {item.movement_id for item in client_payment_list}
+        existing_movement_ids = MovementRepository.existing_movement_ids(db, movement_ids)
+        missing_movement_ids = movement_ids - existing_movement_ids
+        if missing_movement_ids:
+            raise ValueError(f"Some movement_id do not exist: {sorted(str(mid) for mid in missing_movement_ids)}")
+        movement_types = SyncService._get_movement_types(db, movement_ids)
+        for item in client_payment_list:
+            ValidationService.validate_client_payment_fields(item)
+            ValidationService.validate_detail_type_for_movement(movement_types[item.movement_id], "client_payment")
+
+        client_map = resolve_or_create_entities(db, Client, [item.client_name for item in client_payment_list])
+
+        rows = [
+            {
+                "id": item.id,
+                "movement_id": item.movement_id,
+                "client_id": client_map[normalize_entity_name(item.client_name)],
+                "subtotal": item.subtotal,
+            }
+            for item in client_payment_list
+        ]
+
+        deleted, inserted = MovementRepository.replace_movement_client_payments(db, movement_ids, rows)
+        return len(client_payment_list), inserted, deleted
+
+    @staticmethod
+    def sync_full(db: Session, movements: Iterable, items: Iterable, salaries: Iterable, client_payments: Iterable) -> dict:
+        movement_list = list(movements)
+        item_list = list(items)
+        salary_list = list(salaries)
+        client_payment_list = list(client_payments)
+
+        movements_received, movements_inserted, movements_updated = SyncService.sync_movements(db, movement_list)
+        items_received, items_inserted, items_deleted = SyncService.sync_movement_items(db, item_list)
+        salaries_received, salaries_inserted, salaries_deleted = SyncService.sync_movement_salaries(db, salary_list)
+        client_payments_received, client_payments_inserted, client_payments_deleted = SyncService.sync_movement_client_payments(
+            db,
+            client_payment_list,
         )
-        if period is not None:
-            period.name = period_data.name
-            period.start_date = period_data.start_date
-            period.end_date = period_data.end_date
-            period.sheet_id = sheet_id
-            return period, False
 
-        period = Period(
-            year=period_data.year,
-            month=period_data.month,
-            name=period_data.name,
-            start_date=period_data.start_date,
-            end_date=period_data.end_date,
-            sheet_id=sheet_id,
-        )
-        db.add(period)
-        db.flush()
-        return period, True
+        movement_ids = {m.id for m in movement_list}
+        if movement_ids:
+            stored_movements = db.execute(select(Movement).where(Movement.id.in_(movement_ids))).scalars().all()
+            ValidationService.validate_batch_consistency(stored_movements, item_list, salary_list, client_payment_list)
 
-    @staticmethod
-    def _normalize_name(name: str) -> str:
-        return normalize_name(name)
-
-    @staticmethod
-    def normalize(name: str) -> str:
-        return SyncService._normalize_name(name)
-
-    @staticmethod
-    def _clean_names_map(raw_names: Iterable[str]) -> dict[str, str]:
-        normalized_to_clean: dict[str, str] = {}
-        for raw_name in raw_names:
-            clean_name = " ".join(raw_name.strip().split())
-            if clean_name:
-                normalized_to_clean[SyncService._normalize_name(clean_name)] = clean_name
-        return normalized_to_clean
-
-    @staticmethod
-    def _get_or_create_entities_map(
-        db: Session,
-        model: type[Client] | type[Employee] | type[Product],
-        normalized_to_clean: dict[str, str],
-    ) -> tuple[dict[str, UUID], int]:
-        if not normalized_to_clean:
-            return {}, 0
-
-        normalized_names = list(normalized_to_clean.keys())
-        existing_entities = db.query(model).filter(model.normalized_name.in_(normalized_names)).all()
-
-        normalized_to_id: dict[str, UUID] = {
-            entity.normalized_name: entity.id for entity in existing_entities
+        return {
+            "movements": {
+                "received": movements_received,
+                "inserted": movements_inserted,
+                "updated": movements_updated,
+                "deleted": 0,
+            },
+            "movement_items": {
+                "received": items_received,
+                "inserted": items_inserted,
+                "updated": 0,
+                "deleted": items_deleted,
+            },
+            "movement_salaries": {
+                "received": salaries_received,
+                "inserted": salaries_inserted,
+                "updated": 0,
+                "deleted": salaries_deleted,
+            },
+            "movement_client_payments": {
+                "received": client_payments_received,
+                "inserted": client_payments_inserted,
+                "updated": 0,
+                "deleted": client_payments_deleted,
+            },
         }
 
-        missing_names = [
-            clean_name
-            for normalized_name, clean_name in normalized_to_clean.items()
-            if normalized_name not in normalized_to_id
-        ]
-        if missing_names:
-            db.bulk_save_objects(
-                [
-                    model(name=name, normalized_name=SyncService._normalize_name(name))
-                    for name in missing_names
-                ]
-            )
-            db.flush()
-
-            # Re-read after insert to guarantee a complete up-to-date map with server-generated IDs.
-            existing_entities = db.query(model).filter(model.normalized_name.in_(normalized_names)).all()
-            normalized_to_id = {entity.normalized_name: entity.id for entity in existing_entities}
-
-        return normalized_to_id, len(missing_names)
-
     @staticmethod
-    def _resolve_required_id(
-        entity_label: str,
-        raw_name: str | None,
-        mapping: dict[str, UUID],
-        context: str | None = None,
-    ) -> UUID:
-        if not raw_name:
-            detail = f" ({context})" if context else ""
-            raise SyncImportError(f"{entity_label} name is required{detail}")
-        entity_id = mapping.get(SyncService._normalize_name(raw_name))
-        if entity_id is None:
-            detail = f" ({context})" if context else ""
-            raise SyncImportError(f"{entity_label} '{raw_name}' not found after batch sync{detail}")
-        return entity_id
-
-    @staticmethod
-    def _resolve_optional_id(
-        entity_label: str,
-        raw_name: str | None,
-        mapping: dict[str, UUID],
-    ) -> UUID | None:
-        if not raw_name:
-            return None
-        entity_id = mapping.get(SyncService._normalize_name(raw_name))
-        if entity_id is None:
-            raise SyncImportError(f"{entity_label} '{raw_name}' not found after batch sync")
-        return entity_id
+    def _get_movement_types(db: Session, movement_ids: set[UUID]) -> dict[UUID, MovementType]:
+        if not movement_ids:
+            return {}
+        rows = db.execute(select(Movement.id, Movement.type).where(Movement.id.in_(movement_ids))).all()
+        return {movement_id: movement_type for movement_id, movement_type in rows}

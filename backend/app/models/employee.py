@@ -3,15 +3,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import String, text
+from sqlalchemy import Index, String, func, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 
 if TYPE_CHECKING:
-    from app.models.movement import Movement
-    from app.models.movement_detail import MovementDetail
+    from app.models.movement_salary import MovementSalary
 
 
 class Employee(Base):
@@ -22,14 +21,13 @@ class Employee(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
-    normalized_name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
 
-    movements: Mapped[list["Movement"]] = relationship(
-        "Movement",
+    movement_salaries: Mapped[list["MovementSalary"]] = relationship(
+        "MovementSalary",
         back_populates="employee",
     )
-    movement_details: Mapped[list["MovementDetail"]] = relationship(
-        "MovementDetail",
-        back_populates="employee",
-    )
+
+
+Index("uq_employees_name_ci", func.lower(Employee.name), unique=True)
+Index("ix_employees_name", Employee.name)
