@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import logging
 from uuid import UUID
 from uuid import uuid4
 
@@ -26,6 +27,9 @@ from app.utils.name_normalization import normalize_name
 
 class SyncImportError(Exception):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 class SyncService:
@@ -237,6 +241,13 @@ class SyncService:
                 ),
             )
 
+            logger.debug(
+                "sync.import_sheet maps prepared: clients=%s employees=%s products=%s",
+                len(client_name_to_id),
+                len(employee_name_to_id),
+                len(product_name_to_id),
+            )
+
             SyncService.upsert_prices(db=db, prices=data.prices, client_name_to_id=client_name_to_id)
 
             movement_rows: list[dict] = []
@@ -252,22 +263,24 @@ class SyncService:
             for index, movement_data in enumerate(data.movements, start=1):
                 movement_id = uuid4()
                 try:
+                    movement_client_id = SyncService._resolve_required_id(
+                        entity_label="client",
+                        raw_name=movement_data.client,
+                        mapping=client_name_to_id,
+                    )
+                    movement_employee_id = SyncService._resolve_optional_id(
+                        entity_label="employee",
+                        raw_name=movement_data.employee,
+                        mapping=employee_name_to_id,
+                    )
                     movement_rows.append(
                         {
                             "id": movement_id,
                             "period_id": period.id,
                             "date": movement_data.date,
                             "type": movement_data.type,
-                            "client_id": (
-                                client_name_to_id.get(SyncService._normalize_name(movement_data.client))
-                                if movement_data.client
-                                else None
-                            ),
-                            "employee_id": (
-                                employee_name_to_id.get(SyncService._normalize_name(movement_data.employee))
-                                if movement_data.employee
-                                else None
-                            ),
+                            "client_id": movement_client_id,
+                            "employee_id": movement_employee_id,
                             "amount": movement_data.amount,
                             "description": movement_data.description,
                             "source": "sheet",
@@ -280,17 +293,21 @@ class SyncService:
                         employee_id = None
 
                         if detail_data.type == "producto":
-                            if not detail_data.product:
-                                raise SyncImportError("detail.product is required when detail.type='producto'")
-                            product_id = product_name_to_id.get(SyncService._normalize_name(detail_data.product))
+                            product_id = SyncService._resolve_required_id(
+                                entity_label="product",
+                                raw_name=detail_data.product,
+                                mapping=product_name_to_id,
+                                context="detail.type='producto'",
+                            )
 
                         if detail_data.type == "empleado":
                             employee_name = detail_data.employee or movement_data.employee
-                            if not employee_name:
-                                raise SyncImportError(
-                                    "detail.employee or movement.employee is required when detail.type='empleado'"
-                                )
-                            employee_id = employee_name_to_id.get(SyncService._normalize_name(employee_name))
+                            employee_id = SyncService._resolve_required_id(
+                                entity_label="employee",
+                                raw_name=employee_name,
+                                mapping=employee_name_to_id,
+                                context="detail.type='empleado'",
+                            )
 
                         all_detail_rows.append(
                             {
@@ -307,6 +324,7 @@ class SyncService:
 
                     imported_count += 1
                 except Exception as exc:
+                    logger.debug("sync.import_sheet movement failed index=%s error=%s", index, exc)
                     errors.append(SyncImportErrorItem(movement_index=index, message=str(exc)))
 
             if movement_rows:
@@ -388,6 +406,10 @@ class SyncService:
         return normalize_name(name)
 
     @staticmethod
+    def normalize(name: str) -> str:
+        return SyncService._normalize_name(name)
+
+    @staticmethod
     def _clean_names_map(raw_names: Iterable[str]) -> dict[str, str]:
         normalized_to_clean: dict[str, str] = {}
         for raw_name in raw_names:
@@ -418,13 +440,45 @@ class SyncService:
             if normalized_name not in normalized_to_id
         ]
         if missing_names:
-            db.execute(
-                insert(model),
-                [{"name": name, "normalized_name": SyncService._normalize_name(name)} for name in missing_names],
+            db.bulk_save_objects(
+                [
+                    model(name=name, normalized_name=SyncService._normalize_name(name))
+                    for name in missing_names
+                ]
             )
             db.flush()
-            inserted_entities = db.query(model).filter(model.normalized_name.in_(normalized_names)).all()
-            for entity in inserted_entities:
-                normalized_to_id[entity.normalized_name] = entity.id
+
+            # Re-read after insert to guarantee a complete up-to-date map with server-generated IDs.
+            existing_entities = db.query(model).filter(model.normalized_name.in_(normalized_names)).all()
+            normalized_to_id = {entity.normalized_name: entity.id for entity in existing_entities}
 
         return normalized_to_id, len(missing_names)
+
+    @staticmethod
+    def _resolve_required_id(
+        entity_label: str,
+        raw_name: str | None,
+        mapping: dict[str, UUID],
+        context: str | None = None,
+    ) -> UUID:
+        if not raw_name:
+            detail = f" ({context})" if context else ""
+            raise SyncImportError(f"{entity_label} name is required{detail}")
+        entity_id = mapping.get(SyncService._normalize_name(raw_name))
+        if entity_id is None:
+            detail = f" ({context})" if context else ""
+            raise SyncImportError(f"{entity_label} '{raw_name}' not found after batch sync{detail}")
+        return entity_id
+
+    @staticmethod
+    def _resolve_optional_id(
+        entity_label: str,
+        raw_name: str | None,
+        mapping: dict[str, UUID],
+    ) -> UUID | None:
+        if not raw_name:
+            return None
+        entity_id = mapping.get(SyncService._normalize_name(raw_name))
+        if entity_id is None:
+            raise SyncImportError(f"{entity_label} '{raw_name}' not found after batch sync")
+        return entity_id
