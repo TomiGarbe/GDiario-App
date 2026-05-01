@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -41,6 +41,23 @@ class MovementCreate(BaseModel):
         return clean or None
 
 
+class MovementUpdate(BaseModel):
+    date: Optional[date] = None
+    type: Literal["compra", "venta", "gasto", "pago", "sueldo"] | None = None
+    client: str | None = Field(default=None, max_length=120)
+    employee: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    details: list[MovementDetailCreate]
+
+    @field_validator("client", "employee", "description")
+    @classmethod
+    def validate_optional_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        clean = value.strip()
+        return clean or None
+
+
 class MovementDetailResponse(BaseModel):
     id: UUID
     type: str
@@ -62,3 +79,10 @@ class MovementResponse(BaseModel):
     details: list[MovementDetailResponse]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class BalanceResponse(BaseModel):
+    date: date
+    total_debe: Decimal
+    total_haber: Decimal
+    balance: Decimal

@@ -14,7 +14,7 @@ from app.models.movement import Movement
 from app.models.movement_detail import MovementDetail
 from app.models.period import Period
 from app.models.product import Product
-from app.schemas.movement import MovementCreate
+from app.schemas.movement import MovementCreate, MovementUpdate
 
 TWOPLACES = Decimal("0.01")
 
@@ -145,6 +145,111 @@ class MovementService:
         except Exception:
             db.rollback()
             raise
+
+    @staticmethod
+    def update_movement(db: Session, movement_id: UUID, data: MovementUpdate) -> Movement:
+        movement = db.get(Movement, movement_id)
+        if movement is None:
+            raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
+
+        client_cache: dict[str, Client] = {}
+        employee_cache: dict[str, Employee] = {}
+        product_cache: dict[str, Product] = {}
+
+        try:
+            if "date" in data.model_fields_set and data.date is not None:
+                period = MovementService._get_or_create_period_for_date(db, data.date)
+                movement.date = data.date
+                movement.period_id = period.id
+
+            if "type" in data.model_fields_set and data.type is not None:
+                movement.type = data.type
+
+            if "description" in data.model_fields_set:
+                movement.description = data.description
+
+            if "client" in data.model_fields_set:
+                if data.client is not None:
+                    movement.client = MovementService._get_or_create_entity(db, Client, data.client, client_cache)
+                else:
+                    movement.client = None
+
+            if "employee" in data.model_fields_set:
+                if data.employee is not None:
+                    movement.employee = MovementService._get_or_create_entity(db, Employee, data.employee, employee_cache)
+                else:
+                    movement.employee = None
+
+            movement.details.clear()
+            db.flush()
+
+            total_amount = Decimal("0.00")
+            for detail_data in data.details:
+                detail = MovementDetail(
+                    movement_id=movement.id,
+                    type=detail_data.type,
+                    quantity=detail_data.quantity,
+                    unit_price=detail_data.unit_price,
+                    subtotal=None,
+                )
+
+                if detail_data.type == "producto":
+                    if not detail_data.product:
+                        raise InvalidMovementError("detail.product is required when detail.type='producto'")
+                    detail.product = MovementService._get_or_create_entity(
+                        db,
+                        Product,
+                        detail_data.product,
+                        product_cache,
+                    )
+
+                if detail_data.type == "empleado":
+                    employee_name = detail_data.employee or movement.employee.name if movement.employee else None
+                    if not employee_name:
+                        raise InvalidMovementError(
+                            "detail.employee or movement.employee is required when detail.type='empleado'"
+                        )
+                    detail.employee = MovementService._get_or_create_entity(
+                        db,
+                        Employee,
+                        employee_name,
+                        employee_cache,
+                    )
+
+                detail.subtotal = MovementService._calculate_subtotal(detail.quantity, detail.unit_price)
+                if detail.subtotal is not None:
+                    total_amount += detail.subtotal
+
+                movement.details.append(detail)
+
+            movement.amount = total_amount.quantize(TWOPLACES)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+        return MovementService.get_movement_by_id(db, movement.id)
+
+    @staticmethod
+    def get_balance_until_date(db: Session, target_date: date) -> tuple[Decimal, Decimal, Decimal]:
+        debe_types = ("compra", "gasto", "sueldo")
+        haber_types = ("venta", "pago")
+
+        total_debe = (
+            db.query(func.coalesce(func.sum(Movement.amount), 0))
+            .filter(Movement.date <= target_date, Movement.type.in_(debe_types))
+            .scalar()
+        )
+        total_haber = (
+            db.query(func.coalesce(func.sum(Movement.amount), 0))
+            .filter(Movement.date <= target_date, Movement.type.in_(haber_types))
+            .scalar()
+        )
+
+        total_debe_dec = Decimal(total_debe).quantize(TWOPLACES)
+        total_haber_dec = Decimal(total_haber).quantize(TWOPLACES)
+        balance = (total_haber_dec - total_debe_dec).quantize(TWOPLACES)
+        return total_debe_dec, total_haber_dec, balance
 
     @staticmethod
     def _calculate_subtotal(quantity: Decimal | None, unit_price: Decimal | None) -> Decimal | None:
