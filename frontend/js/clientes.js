@@ -159,11 +159,7 @@ function derivarProductosDesdePrecios(precios) {
 
     Object.keys(productos).forEach(function(producto) {
       var historial = Array.isArray(productos[producto]) ? productos[producto] : [];
-      var tienePrecio = historial.some(function(item) {
-        return toNumber(item && item.precio) > 0;
-      });
-
-      if (!tienePrecio) return;
+      if (!historial.length) return;
 
       var key = normalizarTextoClave(producto);
       if (set[key]) return;
@@ -343,9 +339,7 @@ function obtenerProductosPorClienteLocal(cliente) {
 
   return Object.keys(productosMap).filter(function(producto) {
     var historial = Array.isArray(productosMap[producto]) ? productosMap[producto] : [];
-    return historial.some(function(item) {
-      return toNumber(item && item.precio) > 0;
-    });
+    return historial.length > 0;
   });
 }
 

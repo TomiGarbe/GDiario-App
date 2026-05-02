@@ -610,6 +610,7 @@ function _distribuirMovimientosLegacyNoUsar() {
 
     switch (type) {
       case "Entrega":
+      case "Entrega de dinero":
       case "entrega":
       case "entrega_dinero":
         return;
