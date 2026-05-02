@@ -39,6 +39,22 @@ export interface Balance {
   balance: string;
 }
 
+export interface EntityProduct {
+  product_id: string;
+  product_name: string;
+  price: string;
+}
+
+export interface EntityClient {
+  id: string;
+  name: string;
+  products: EntityProduct[];
+}
+
+export interface EntitiesResponse {
+  clients: EntityClient[];
+}
+
 export interface ApiErrorPayload {
   detail?: string | Array<{ msg?: string }>;
   message?: string;

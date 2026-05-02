@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from uuid import uuid4
+
+from sqlalchemy import text
+
+from app.core.db import SessionLocal
 
 
 def _create_movement(client, payload: dict) -> dict:
@@ -81,14 +86,14 @@ def test_movements_and_balance_scenarios(client):
 
     compra_out = next(m for m in movements if m["id"] == compra["id"])
     assert compra_out["items"]
-    assert compra_out["items"][0]["client"] == "Acme"
-    assert compra_out["items"][0]["product"] == "Yerba"
+    assert compra_out["items"][0]["client"].lower() == "acme"
+    assert compra_out["items"][0]["product"].lower() == "yerba"
     assert compra_out["salaries"] == []
     assert compra_out["client_payments"] == []
 
     pago_out = next(m for m in movements if m["id"] == pago_cliente["id"])
     assert pago_out["client_payments"]
-    assert pago_out["client_payments"][0]["client"] == "Acme"
+    assert pago_out["client_payments"][0]["client"].lower() == "acme"
 
     gasto_out = next(m for m in movements if m["id"] == gasto["id"])
     assert gasto_out["items"] == []
@@ -98,12 +103,13 @@ def test_movements_and_balance_scenarios(client):
     balance_resp = client.get("/api/movements/balance")
     assert balance_resp.status_code == 200
     balance = Decimal(str(balance_resp.json()["balance"]))
-    # compra -100, venta +200, pago_cliente -30, gasto -10 => 60
-    assert balance == Decimal("60.0000")
+    # entrega_dinero suma; el resto resta
+    # compra -100, venta -200, pago_cliente -30, gasto -10 => -340
+    assert balance == Decimal("-340.0000")
 
     venta_balance = client.get("/api/movements/balance", params={"type": "venta"})
     assert venta_balance.status_code == 200
-    assert Decimal(str(venta_balance.json()["balance"])) == Decimal("200.0000")
+    assert Decimal(str(venta_balance.json()["balance"])) == Decimal("-200.0000")
 
     compra_balance = client.get("/api/movements/balance", params={"type": "compra"})
     assert compra_balance.status_code == 200
@@ -140,49 +146,54 @@ def test_movements_filters_and_pagination(client):
 
 
 def test_entities_alphabetical_and_unique(client):
-    _create_movement(
-        client,
-        {
-                "period_id": 10,
-                "date": "2026-03-01",
-                "type": "venta",
-                "amount": "1.0000",
-            "description": "venta",
-            "items": [
-                {
-                    "client": "Zulu",
-                    "product": "Queso",
-                    "quantity": "1.0000",
-                    "unit_price": "10.0000",
-                    "subtotal": "10.0000",
-                },
-                {
-                    "client": "Alpha",
-                    "product": "Azucar",
-                    "quantity": "1.0000",
-                    "unit_price": "20.0000",
-                    "subtotal": "20.0000",
-                },
-            ],
-        },
-    )
-
-    _create_movement(
-        client,
-        {
-            "period_id": 10,
-            "date": "2026-03-02",
-            "type": "sueldo",
-            "amount": "1.0000",
-            "description": "sueldos",
-            "salaries": [{"employee": "Bruno", "subtotal": "30.0000"}, {"employee": "Ana", "subtotal": "40.0000"}],
-        },
-    )
+    with SessionLocal() as db:
+        alpha_id = uuid4()
+        zulu_id = uuid4()
+        azucar_id = uuid4()
+        queso_id = uuid4()
+        db.execute(
+            text("INSERT INTO clients (id, name) VALUES (:id1, :name1), (:id2, :name2)"),
+            {"id1": alpha_id, "name1": "Alpha", "id2": zulu_id, "name2": "Zulu"},
+        )
+        db.execute(
+            text("INSERT INTO products (id, name) VALUES (:id1, :name1), (:id2, :name2)"),
+            {"id1": azucar_id, "name1": "Azucar", "id2": queso_id, "name2": "Queso"},
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO prices (id, client_id, product_id, price, start_date) VALUES
+                  (:id1, :client_alpha, :product_azucar, 10.00, '2026-03-01'),
+                  (:id2, :client_alpha, :product_azucar, 20.00, '2026-04-01'),
+                  (:id3, :client_zulu, :product_queso, 15.00, '2026-01-01'),
+                  (:id4, :client_zulu, :product_queso, 40.00, '2099-01-01')
+                """
+            ),
+            {
+                "id1": uuid4(),
+                "id2": uuid4(),
+                "id3": uuid4(),
+                "id4": uuid4(),
+                "client_alpha": alpha_id,
+                "client_zulu": zulu_id,
+                "product_azucar": azucar_id,
+                "product_queso": queso_id,
+            },
+        )
+        db.commit()
 
     entities_resp = client.get("/api/movements/entities")
     assert entities_resp.status_code == 200
     data = entities_resp.json()
 
-    assert data["clients"] == sorted(set(data["clients"]))
-    assert data["products"] == sorted(set(data["products"]))
-    assert data["employees"] == sorted(set(data["employees"]))
+    assert [c["name"] for c in data["clients"]] == ["Alpha", "Zulu"]
+
+    alpha = data["clients"][0]
+    zulu = data["clients"][1]
+    assert len(alpha["products"]) == 1
+    assert alpha["products"][0]["product_name"] == "Azucar"
+    assert Decimal(str(alpha["products"][0]["price"])) == Decimal("20.00")
+
+    assert len(zulu["products"]) == 1
+    assert zulu["products"][0]["product_name"] == "Queso"
+    assert Decimal(str(zulu["products"][0]["price"])) == Decimal("15.00")

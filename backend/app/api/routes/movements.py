@@ -5,19 +5,21 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Select, case, distinct, func, select
+from sqlalchemy import Select, case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.db import get_db
 from app.models.client import Client
-from app.models.employee import Employee
 from app.models.movement import Movement, MovementType
 from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
 from app.models.movement_salary import MovementSalary
+from app.models.price import Price
 from app.models.product import Product
 from app.schemas.movement import (
     BalanceOut,
+    EntityClientOut,
+    EntityProductOut,
     EntitiesOut,
     MovementCreate,
     MovementClientPaymentOut,
@@ -144,15 +146,6 @@ def get_movements(
     return [_to_movement_out(movement) for movement in movements]
 
 
-@router.get("/{movement_id}", response_model=MovementOut)
-def get_movement(movement_id: UUID, db: Session = Depends(get_db)) -> MovementOut:
-    try:
-        movement = MovementService.get_movement_by_id(db, movement_id)
-        return _to_movement_out(movement)
-    except MovementNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-
-
 @router.post("/", response_model=MovementOut, status_code=status.HTTP_201_CREATED)
 def create_movement(payload: MovementCreate, db: Session = Depends(get_db)) -> MovementOut:
     try:
@@ -161,28 +154,6 @@ def create_movement(payload: MovementCreate, db: Session = Depends(get_db)) -> M
     except HTTPException:
         db.rollback()
         raise
-
-
-@router.patch("/{movement_id}", response_model=MovementOut)
-def update_movement(movement_id: UUID, payload: MovementUpdate, db: Session = Depends(get_db)) -> MovementOut:
-    try:
-        movement = MovementService.update_movement(db, movement_id, payload)
-        return _to_movement_out(movement)
-    except MovementNotFoundError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except HTTPException:
-        db.rollback()
-        raise
-
-
-@router.delete("/{movement_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_movement(movement_id: UUID, db: Session = Depends(get_db)) -> None:
-    try:
-        MovementService.delete_movement(db, movement_id)
-    except MovementNotFoundError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/flat", response_model=list[MovementFlatOut])
@@ -247,13 +218,56 @@ def get_movements_flat(
 
 @router.get("/entities", response_model=EntitiesOut)
 def get_entities(db: Session = Depends(get_db)) -> EntitiesOut:
-    clients = db.scalars(select(distinct(Client.name)).order_by(Client.name.asc())).all()
-    products = db.scalars(select(distinct(Product.name)).order_by(Product.name.asc())).all()
-    employees = db.scalars(select(distinct(Employee.name)).order_by(Employee.name.asc())).all()
+    latest_prices_subq = (
+        select(
+            Price.client_id.label("client_id"),
+            Price.product_id.label("product_id"),
+            Price.price.label("price"),
+            func.row_number()
+            .over(
+                partition_by=(Price.client_id, Price.product_id),
+                order_by=(Price.start_date.desc(), Price.id.desc()),
+            )
+            .label("rn"),
+        )
+        .where(Price.start_date <= date.today())
+        .subquery()
+    )
+
+    priced_rows = db.execute(
+        select(
+            Client.id,
+            Client.name,
+            Product.id,
+            Product.name,
+            latest_prices_subq.c.price,
+        )
+        .join(latest_prices_subq, latest_prices_subq.c.client_id == Client.id)
+        .join(Product, Product.id == latest_prices_subq.c.product_id)
+        .where(latest_prices_subq.c.rn == 1)
+        .order_by(Client.name.asc(), Product.name.asc())
+    ).all()
+
+    clients_by_id: dict = {}
+    for client_id, client_name, product_id, product_name, product_price in priced_rows:
+        if client_id not in clients_by_id:
+            clients_by_id[client_id] = EntityClientOut(id=client_id, name=client_name, products=[])
+        clients_by_id[client_id].products.append(
+            EntityProductOut(
+                product_id=product_id,
+                product_name=product_name,
+                price=product_price,
+            )
+        )
+
+    all_clients = db.scalars(select(Client).order_by(Client.name.asc())).all()
+    for client in all_clients:
+        if client.id not in clients_by_id:
+            clients_by_id[client.id] = EntityClientOut(id=client.id, name=client.name, products=[])
+
+    ordered_clients = sorted(clients_by_id.values(), key=lambda item: item.name.lower())
     return EntitiesOut(
-        clients=clients,
-        products=products,
-        employees=employees,
+        clients=ordered_clients,
     )
 
 
@@ -266,7 +280,7 @@ def get_balance(
     db: Session = Depends(get_db),
 ) -> BalanceOut:
     signed_amount = case(
-        (Movement.type == MovementType.VENTA, Movement.amount),
+        (Movement.type == MovementType.ENTREGA_DINERO, Movement.amount),
         else_=-Movement.amount,
     )
     stmt = select(func.coalesce(func.sum(signed_amount), 0)).where(
@@ -279,3 +293,34 @@ def get_balance(
     )
     balance = db.scalar(stmt)
     return BalanceOut(balance=Decimal(balance))
+
+
+@router.get("/{movement_id}", response_model=MovementOut)
+def get_movement(movement_id: UUID, db: Session = Depends(get_db)) -> MovementOut:
+    try:
+        movement = MovementService.get_movement_by_id(db, movement_id)
+        return _to_movement_out(movement)
+    except MovementNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.patch("/{movement_id}", response_model=MovementOut)
+def update_movement(movement_id: UUID, payload: MovementUpdate, db: Session = Depends(get_db)) -> MovementOut:
+    try:
+        movement = MovementService.update_movement(db, movement_id, payload)
+        return _to_movement_out(movement)
+    except MovementNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except HTTPException:
+        db.rollback()
+        raise
+
+
+@router.delete("/{movement_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_movement(movement_id: UUID, db: Session = Depends(get_db)) -> None:
+    try:
+        MovementService.delete_movement(db, movement_id)
+    except MovementNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

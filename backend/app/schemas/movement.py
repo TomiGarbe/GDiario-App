@@ -114,10 +114,20 @@ class MovementFlatOut(BaseModel):
     amount: Decimal
 
 
+class EntityProductOut(BaseModel):
+    product_id: UUID
+    product_name: str
+    price: Decimal
+
+
+class EntityClientOut(BaseModel):
+    id: UUID
+    name: str
+    products: list[EntityProductOut] = Field(default_factory=list)
+
+
 class EntitiesOut(BaseModel):
-    clients: list[str] = Field(default_factory=list)
-    products: list[str] = Field(default_factory=list)
-    employees: list[str] = Field(default_factory=list)
+    clients: list[EntityClientOut] = Field(default_factory=list)
 
 
 class BalanceOut(BaseModel):

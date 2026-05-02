@@ -415,30 +415,37 @@ function request(path, opts) {
 }
 
 function getInitialData() {
-  return Promise.all([
-    request('/clients'),
-    request('/movements?limit=1000')
-  ]).then(function(results) {
-    var clientsPayload = Array.isArray(results[0]) ? results[0] : [];
-    var movementsPayload = Array.isArray(results[1]) ? results[1] : [];
+  return request('/movements/entities').then(function(payload) {
+    var clientsRaw = Array.isArray(payload && payload.clients) ? payload.clients : [];
+    var clientes = [];
+    var productosMap = Object.create(null);
+    var precios = Object.create(null);
 
-    var clients = clientsPayload
-      .map(function(c) { return String(c && c.name || '').trim(); })
-      .filter(Boolean);
+    clientsRaw.forEach(function(client) {
+      var clientName = String(client && client.name || '').trim();
+      if (!clientName) return;
 
-    var productsMap = Object.create(null);
-    movementsPayload.forEach(function(mov) {
-      var items = Array.isArray(mov && mov.items) ? mov.items : [];
-      items.forEach(function(it) {
-        var p = String(it && it.product || '').trim();
-        if (p) productsMap[p] = true;
+      clientes.push(clientName);
+
+      var products = Array.isArray(client && client.products) ? client.products : [];
+      var preciosCliente = Object.create(null);
+
+      products.forEach(function(product) {
+        var productName = String(product && product.product_name || '').trim();
+        var productPrice = toNum(product && product.price);
+        if (!productName || !(productPrice > 0)) return;
+
+        productosMap[productName] = true;
+        preciosCliente[productName] = [{ fecha: getTodayIso(), precio: productPrice }];
       });
+
+      precios[clientName] = preciosCliente;
     });
 
     return {
-      clientes: clients,
-      productos: Object.keys(productsMap),
-      precios: {},
+      clientes: clientes,
+      productos: Object.keys(productosMap),
+      precios: precios,
       clientesEspeciales: []
     };
   });
@@ -473,24 +480,10 @@ function fetchConAuth(data) {
   if (action === 'obtenerSaldo') {
     var fecha = String(payload.fecha || payload.date || getTodayIso()).trim();
     var fechaIso = toIsoDate(fecha) || getTodayIso();
-    var qsSaldo = buildQueryString({
-      date_from: fechaIso,
-      date_to: fechaIso,
-      period_id: getPeriodIdFromDate(fechaIso),
-      client_id: payload.client_id,
-      product_id: payload.product_id
-    });
+    var qsSaldo = buildQueryString({ date_from: fechaIso, date_to: fechaIso });
 
-    return request('/movements' + qsSaldo).then(function(rows) {
-      var list = Array.isArray(rows) ? rows : [];
-      var saldo = list.reduce(function(acc, mov) {
-        var type = String(mov && mov.type || '').toLowerCase();
-        var amount = toNum(mov && mov.amount);
-        if (type === 'venta') return acc + amount;
-        return acc - amount;
-      }, 0);
-
-      return { saldo: saldo };
+    return request('/movements/balance' + qsSaldo).then(function(resp) {
+      return { saldo: toNum(resp && resp.balance) };
     });
   }
 
@@ -500,9 +493,7 @@ function fetchConAuth(data) {
       date_from: fechaMov || undefined,
       date_to: fechaMov || undefined,
       period_id: getPeriodIdFromDate(fechaMov || getTodayIso()),
-      limit: 1000,
-      client_id: payload.client_id,
-      product_id: payload.product_id
+      limit: 1000
     });
 
     return request('/movements' + qsMov).then(function(lista) {
