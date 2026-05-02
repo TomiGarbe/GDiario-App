@@ -432,8 +432,9 @@ function getInitialData() {
 
       products.forEach(function(product) {
         var productName = String(product && product.product_name || '').trim();
-        var productPrice = toNum(product && product.price);
-        if (!productName || !(productPrice > 0)) return;
+        var rawPrice = product ? product.price : null;
+        var productPrice = Number(rawPrice);
+        if (!productName || rawPrice === null || rawPrice === undefined || !Number.isFinite(productPrice)) return;
 
         productosMap[productName] = true;
         preciosCliente[productName] = [{ fecha: getTodayIso(), precio: productPrice }];

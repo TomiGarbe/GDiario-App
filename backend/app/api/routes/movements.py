@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Select, case, func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.db import get_db
@@ -269,19 +269,33 @@ def get_balance(
     type: MovementType | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> BalanceOut:
-    signed_amount = case(
-        (Movement.type == MovementType.ENTREGA_DINERO, Movement.amount),
-        else_=-Movement.amount,
-    )
-    stmt = select(func.coalesce(func.sum(signed_amount), 0)).where(
+    stmt = select(Movement).where(
         *_build_movements_filters(
             date_from=date_from,
             date_to=date_to,
             movement_type=type,
         )
     )
-    balance = db.scalar(stmt)
-    return BalanceOut(balance=Decimal(balance))
+    movements = db.scalars(stmt).all()
+
+    balance = Decimal("0")
+    sum_types = {"entrega_dinero", "pago_cliente", "venta"}
+
+    for m in movements:
+        amount = Decimal(m.amount)
+        tipo = (
+            m.type.value.lower()
+            if hasattr(m.type, "value")
+            else str(m.type).lower()
+        )
+        print("TYPE:", m.type, "NORMALIZED:", tipo, "AMOUNT:", amount)
+
+        if tipo in sum_types:
+            balance += amount
+        else:
+            balance -= amount
+
+    return BalanceOut(balance=balance)
 
 
 @router.get("/{movement_id}", response_model=MovementOut)

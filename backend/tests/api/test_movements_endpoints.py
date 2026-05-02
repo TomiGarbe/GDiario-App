@@ -103,13 +103,14 @@ def test_movements_and_balance_scenarios(client):
     balance_resp = client.get("/api/movements/balance")
     assert balance_resp.status_code == 200
     balance = Decimal(str(balance_resp.json()["balance"]))
-    # entrega_dinero suma; el resto resta
-    # compra -100, venta -200, pago_cliente -30, gasto -10 => -340
-    assert balance == Decimal("-340.0000")
+    # Suman: entrega_dinero, pago_cliente, venta
+    # Restan: compra, gasto, sueldo
+    # compra -100, venta +200, pago_cliente +30, gasto -10 => 120
+    assert balance == Decimal("120.0000")
 
     venta_balance = client.get("/api/movements/balance", params={"type": "venta"})
     assert venta_balance.status_code == 200
-    assert Decimal(str(venta_balance.json()["balance"])) == Decimal("-200.0000")
+    assert Decimal(str(venta_balance.json()["balance"])) == Decimal("200.0000")
 
     compra_balance = client.get("/api/movements/balance", params={"type": "compra"})
     assert compra_balance.status_code == 200
