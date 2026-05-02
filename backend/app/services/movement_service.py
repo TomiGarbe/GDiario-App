@@ -1,150 +1,65 @@
 from __future__ import annotations
 
-import calendar
-from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 from uuid import UUID
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.client import Client
 from app.models.employee import Employee
-from app.models.movement import Movement
-from app.models.movement_detail import MovementDetail
-from app.models.period import Period
+from app.models.movement import Movement, MovementType
+from app.models.movement_client_payment import MovementClientPayment
+from app.models.movement_item import MovementItem
+from app.models.movement_salary import MovementSalary
 from app.models.product import Product
 from app.schemas.movement import MovementCreate, MovementUpdate
-from app.utils.name_normalization import normalize_name
+from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
+from app.services.validation_service import ValidationService
 
-TWOPLACES = Decimal("0.01")
+TWOPLACES = Decimal("0.0001")
 
 
 class MovementNotFoundError(Exception):
     pass
 
 
-class InvalidMovementError(Exception):
-    pass
-
-
 class MovementService:
     @staticmethod
-    def create_movement(db: Session, data: MovementCreate) -> Movement:
-        client_cache: dict[str, Client] = {}
-        employee_cache: dict[str, Employee] = {}
-        product_cache: dict[str, Product] = {}
-
-        try:
-            period = MovementService._get_or_create_period_for_date(db, data.date)
-
-            movement = Movement(
-                period_id=period.id,
-                date=data.date,
-                type=data.type,
-                amount=Decimal("0.00"),
-                description=data.description,
-                source="app",
-            )
-
-            if data.client:
-                movement.client = MovementService._get_or_create_entity(db, Client, data.client, client_cache)
-
-            if data.employee:
-                movement.employee = MovementService._get_or_create_entity(db, Employee, data.employee, employee_cache)
-
-            db.add(movement)
-            db.flush()
-
-            total_amount = Decimal("0.00")
-            for detail_data in data.details:
-                detail = MovementDetail(
-                    movement_id=movement.id,
-                    type=detail_data.type,
-                    quantity=detail_data.quantity,
-                    unit_price=detail_data.unit_price,
-                    subtotal=None,
-                )
-
-                if detail_data.type == "producto":
-                    if not detail_data.product:
-                        raise InvalidMovementError("detail.product is required when detail.type='producto'")
-                    detail.product = MovementService._get_or_create_entity(
-                        db,
-                        Product,
-                        detail_data.product,
-                        product_cache,
-                    )
-
-                if detail_data.type == "empleado":
-                    employee_name = detail_data.employee or data.employee
-                    if not employee_name:
-                        raise InvalidMovementError(
-                            "detail.employee or movement.employee is required when detail.type='empleado'"
-                        )
-                    detail.employee = MovementService._get_or_create_entity(
-                        db,
-                        Employee,
-                        employee_name,
-                        employee_cache,
-                    )
-
-                detail.subtotal = MovementService._calculate_subtotal(detail.quantity, detail.unit_price)
-                if detail.subtotal is not None:
-                    total_amount += detail.subtotal
-
-                db.add(detail)
-
-            movement.amount = total_amount.quantize(TWOPLACES)
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-
-        return MovementService.get_movement_by_id(db, movement.id)
-
-    @staticmethod
-    def get_movements(db: Session) -> list[Movement]:
-        return (
-            db.query(Movement)
-            .options(
-                joinedload(Movement.client),
-                joinedload(Movement.employee),
-                joinedload(Movement.details).joinedload(MovementDetail.product),
-                joinedload(Movement.details).joinedload(MovementDetail.employee),
-            )
-            .order_by(Movement.date.desc())
-            .all()
-        )
-
-    @staticmethod
     def get_movement_by_id(db: Session, movement_id: UUID) -> Movement:
-        movement = (
-            db.query(Movement)
+        movement = db.scalar(
+            select(Movement)
+            .where(Movement.id == movement_id)
             .options(
-                joinedload(Movement.client),
-                joinedload(Movement.employee),
-                joinedload(Movement.details).joinedload(MovementDetail.product),
-                joinedload(Movement.details).joinedload(MovementDetail.employee),
+                selectinload(Movement.items).selectinload(MovementItem.client),
+                selectinload(Movement.items).selectinload(MovementItem.product),
+                selectinload(Movement.salaries).selectinload(MovementSalary.employee),
+                selectinload(Movement.client_payments).selectinload(MovementClientPayment.client),
             )
-            .filter(Movement.id == movement_id)
-            .first()
         )
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
         return movement
 
     @staticmethod
-    def delete_movement(db: Session, movement_id: UUID) -> None:
-        movement = db.get(Movement, movement_id)
-        if movement is None:
-            raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
+    def create_movement(db: Session, data: MovementCreate) -> Movement:
+        movement_type = MovementType(data.type)
+        items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
 
-        try:
-            db.delete(movement)
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        movement = Movement(
+            period_id=data.period_id,
+            date=data.date,
+            type=movement_type,
+            amount=amount,
+            description=data.description,
+        )
+        db.add(movement)
+        db.flush()
+
+        MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
+        db.commit()
+        return MovementService.get_movement_by_id(db, movement.id)
 
     @staticmethod
     def update_movement(db: Session, movement_id: UUID, data: MovementUpdate) -> Movement:
@@ -152,88 +67,134 @@ class MovementService:
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
 
-        client_cache: dict[str, Client] = {}
-        employee_cache: dict[str, Employee] = {}
-        product_cache: dict[str, Product] = {}
+        movement_type = MovementType(data.type)
+        items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
 
-        try:
-            if "date" in data.model_fields_set and data.date is not None:
-                period = MovementService._get_or_create_period_for_date(db, data.date)
-                movement.date = data.date
-                movement.period_id = period.id
+        movement.period_id = data.period_id
+        movement.date = data.date
+        movement.type = movement_type
+        movement.amount = amount
+        movement.description = data.description
 
-            if "type" in data.model_fields_set and data.type is not None:
-                movement.type = data.type
-
-            if "description" in data.model_fields_set:
-                movement.description = data.description
-
-            if "client" in data.model_fields_set:
-                if data.client is not None:
-                    movement.client = MovementService._get_or_create_entity(db, Client, data.client, client_cache)
-                else:
-                    movement.client = None
-
-            if "employee" in data.model_fields_set:
-                if data.employee is not None:
-                    movement.employee = MovementService._get_or_create_entity(db, Employee, data.employee, employee_cache)
-                else:
-                    movement.employee = None
-
-            movement.details.clear()
-            db.flush()
-
-            total_amount = Decimal("0.00")
-            for detail_data in data.details:
-                detail = MovementDetail(
-                    movement_id=movement.id,
-                    type=detail_data.type,
-                    quantity=detail_data.quantity,
-                    unit_price=detail_data.unit_price,
-                    subtotal=None,
-                )
-
-                if detail_data.type == "producto":
-                    if not detail_data.product:
-                        raise InvalidMovementError("detail.product is required when detail.type='producto'")
-                    detail.product = MovementService._get_or_create_entity(
-                        db,
-                        Product,
-                        detail_data.product,
-                        product_cache,
-                    )
-
-                if detail_data.type == "empleado":
-                    employee_name = detail_data.employee or movement.employee.name if movement.employee else None
-                    if not employee_name:
-                        raise InvalidMovementError(
-                            "detail.employee or movement.employee is required when detail.type='empleado'"
-                        )
-                    detail.employee = MovementService._get_or_create_entity(
-                        db,
-                        Employee,
-                        employee_name,
-                        employee_cache,
-                    )
-
-                detail.subtotal = MovementService._calculate_subtotal(detail.quantity, detail.unit_price)
-                if detail.subtotal is not None:
-                    total_amount += detail.subtotal
-
-                movement.details.append(detail)
-
-            movement.amount = total_amount.quantize(TWOPLACES)
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-
+        MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
+        db.commit()
         return MovementService.get_movement_by_id(db, movement.id)
 
     @staticmethod
-    def get_balance_until_date(db: Session, target_date: date) -> tuple[Decimal, Decimal, Decimal]:
+    def delete_movement(db: Session, movement_id: UUID) -> None:
+        movement = db.get(Movement, movement_id)
+        if movement is None:
+            raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
+        db.delete(movement)
+        db.commit()
+
+    @staticmethod
+    def replace_details(
+        db: Session,
+        movement_id: UUID,
+        movement_type: MovementType,
+        items: list[dict],
+        salaries: list[dict],
+        client_payments: list[dict],
+    ) -> None:
+        db.query(MovementItem).filter(MovementItem.movement_id == movement_id).delete()
+        db.query(MovementSalary).filter(MovementSalary.movement_id == movement_id).delete()
+        db.query(MovementClientPayment).filter(MovementClientPayment.movement_id == movement_id).delete()
+
+        if movement_type in (MovementType.COMPRA, MovementType.VENTA):
+            for item in items:
+                db.add(MovementItem(movement_id=movement_id, **item))
+        elif movement_type == MovementType.SUELDO:
+            for salary in salaries:
+                db.add(MovementSalary(movement_id=movement_id, **salary))
+        elif movement_type == MovementType.PAGO_CLIENTE:
+            for client_payment in client_payments:
+                db.add(MovementClientPayment(movement_id=movement_id, **client_payment))
+
+    @staticmethod
+    def _prepare_payload(
+        db: Session,
+        movement_type: MovementType,
+        data: MovementCreate | MovementUpdate,
+    ) -> tuple[list[dict], list[dict], list[dict], Decimal]:
+        item_payload = data.items or []
+        salary_payload = data.salaries or []
+        client_payment_payload = data.client_payments or []
+
+        ValidationService.validate_unified_movement_payload(
+            movement_type=movement_type,
+            amount=data.amount,
+            items=item_payload,
+            salaries=salary_payload,
+            client_payments=client_payment_payload,
+        )
+
+        client_map = resolve_or_create_entities(
+            db,
+            Client,
+            [item.client for item in item_payload] + [cp.client for cp in client_payment_payload],
+        )
+        product_map = resolve_or_create_entities(db, Product, [item.product for item in item_payload])
+        employee_map = resolve_or_create_entities(db, Employee, [salary.employee for salary in salary_payload])
+
+        items: list[dict] = []
+        for item in item_payload:
+            subtotal = item.subtotal if item.subtotal is not None else (item.quantity * item.unit_price)
+            ValidationService.validate_item_fields(
+                SimpleNamespace(quantity=item.quantity, unit_price=item.unit_price, subtotal=subtotal)
+            )
+            items.append(
+                {
+                    "client_id": client_map[normalize_entity_name(item.client)],
+                    "product_id": product_map[normalize_entity_name(item.product)],
+                    "quantity": item.quantity,
+                    "unit_price": item.unit_price,
+                    "subtotal": subtotal.quantize(TWOPLACES),
+                }
+            )
+
+        salaries: list[dict] = []
+        for salary in salary_payload:
+            ValidationService.validate_salary_fields(salary)
+            salaries.append(
+                {
+                    "employee_id": employee_map[normalize_entity_name(salary.employee)],
+                    "subtotal": salary.subtotal.quantize(TWOPLACES),
+                }
+            )
+
+        client_payments: list[dict] = []
+        for client_payment in client_payment_payload:
+            ValidationService.validate_client_payment_fields(client_payment)
+            client_payments.append(
+                {
+                    "client_id": client_map[normalize_entity_name(client_payment.client)],
+                    "subtotal": client_payment.subtotal.quantize(TWOPLACES),
+                }
+            )
+
+        if movement_type in (MovementType.COMPRA, MovementType.VENTA):
+            amount = sum((item["subtotal"] for item in items), Decimal("0")).quantize(TWOPLACES)
+        elif movement_type == MovementType.SUELDO:
+            amount = sum((salary["subtotal"] for salary in salaries), Decimal("0")).quantize(TWOPLACES)
+        elif movement_type == MovementType.PAGO_CLIENTE:
+            amount = sum((cp["subtotal"] for cp in client_payments), Decimal("0")).quantize(TWOPLACES)
+        else:
+            amount = data.amount.quantize(TWOPLACES)
+
+        ValidationService.validate_amount_consistency(
+            SimpleNamespace(id=None, type=movement_type.value, amount=amount),
+            [SimpleNamespace(**item) for item in items],
+            [SimpleNamespace(**salary) for salary in salaries],
+            [SimpleNamespace(**cp) for cp in client_payments],
+        )
+
+        return items, salaries, client_payments, amount
+
+    @staticmethod
+    def get_balance_until_date(db: Session, target_date) -> tuple[Decimal, Decimal, Decimal]:
         debe_types = ("compra", "gasto", "sueldo")
-        haber_types = ("venta", "pago")
+        haber_types = ("venta", "pago_cliente")
 
         total_debe = (
             db.query(func.coalesce(func.sum(Movement.amount), 0))
@@ -250,63 +211,3 @@ class MovementService:
         total_haber_dec = Decimal(total_haber).quantize(TWOPLACES)
         balance = (total_haber_dec - total_debe_dec).quantize(TWOPLACES)
         return total_debe_dec, total_haber_dec, balance
-
-    @staticmethod
-    def _calculate_subtotal(quantity: Decimal | None, unit_price: Decimal | None) -> Decimal | None:
-        if quantity is None or unit_price is None:
-            return None
-        return (quantity * unit_price).quantize(TWOPLACES)
-
-    @staticmethod
-    def _get_or_create_period_for_date(db: Session, movement_date: date) -> Period:
-        period = (
-            db.query(Period)
-            .filter(
-                Period.year == movement_date.year,
-                Period.month == movement_date.month,
-            )
-            .first()
-        )
-        if period is not None:
-            return period
-
-        last_day = calendar.monthrange(movement_date.year, movement_date.month)[1]
-        period = Period(
-            year=movement_date.year,
-            month=movement_date.month,
-            name=f"{movement_date.year}-{movement_date.month:02d}",
-            start_date=date(movement_date.year, movement_date.month, 1),
-            end_date=date(movement_date.year, movement_date.month, last_day),
-        )
-        db.add(period)
-        db.flush()
-        return period
-
-    @staticmethod
-    def _normalize_name(name: str) -> str:
-        return normalize_name(name)
-
-    @staticmethod
-    def _get_or_create_entity(
-        db: Session,
-        model: type[Client] | type[Employee] | type[Product],
-        raw_name: str,
-        cache: dict[str, Client | Employee | Product],
-    ) -> Client | Employee | Product:
-        normalized_name = MovementService._normalize_name(raw_name)
-        if normalized_name in cache:
-            return cache[normalized_name]
-
-        existing = db.query(model).filter(model.normalized_name == normalized_name).first()
-        if existing is not None:
-            cache[normalized_name] = existing
-            return existing
-
-        entity = model(
-            name=" ".join(raw_name.strip().split()),
-            normalized_name=normalized_name,
-        )
-        db.add(entity)
-        db.flush()
-        cache[normalized_name] = entity
-        return entity

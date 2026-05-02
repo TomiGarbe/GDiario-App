@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import type { Movement, MovementCreateInput, MovementUpdateInput } from "../types/api";
+import type { Movement } from "../types/api";
 import { ApiError } from "../lib/api";
 import { movementService } from "../services/movements";
 
@@ -15,7 +15,7 @@ export function useMovements() {
     try {
       setLoading(true);
       setError(null);
-      const data = await movementService.getAll();
+      const data = await movementService.list();
       setMovements(data);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Unexpected error loading movements";
@@ -29,13 +29,13 @@ export function useMovements() {
     void fetchMovements();
   }, [fetchMovements]);
 
-  const createMovement = useCallback(async (payload: MovementCreateInput) => {
+  const createMovement = useCallback(async (payload: any) => {
     const created = await movementService.create(payload);
     setMovements((prev) => [created, ...prev]);
     return created;
   }, []);
 
-  const updateMovement = useCallback(async (id: string, payload: MovementUpdateInput) => {
+  const updateMovement = useCallback(async (id: string, payload: any) => {
     const updated = await movementService.update(id, payload);
     setMovements((prev) => prev.map((movement) => (movement.id === id ? updated : movement)));
     return updated;

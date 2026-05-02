@@ -1,8 +1,5 @@
 // ================================================================
 // Reconstruct.js — Conversión entre hojas operativas y MOVEMENTS
-//
-// Flujo normal:  GRASA/HUESOS/SUELDOS/GASTOS → reconstruir → MOVEMENTS → sync
-// Flujo inverso: fetch → MOVEMENTS → distribuir → GRASA/HUESOS/SUELDOS/GASTOS
 // ================================================================
 
 // ========================= RECONSTRUIR =========================
@@ -10,73 +7,48 @@
 function reconstruirMovimientos() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  const comprasVentas = _parsearProductos(ss);
-  const sueldos       = parseSueldos(ss);
-  const gastos        = parseGastos(ss);
+  const productos = procesarProductos(ss);
+  const sueldos = procesarSueldos(ss);
+  const gastos = procesarGastos(ss);
+  const pagos = procesarPagosClientes(ss);
 
   const allMovements = [
-    ...comprasVentas.movements,
+    ...productos.movements,
     ...sueldos.movements,
-    ...gastos.movements
+    ...gastos.movements,
+    ...pagos.movements
   ];
-  const allDetails = [
-    ...comprasVentas.details,
-    ...sueldos.details,
-    ...gastos.details
+  const allItems = [
+    ...productos.items,
+    ...pagos.items
+  ];
+  const allSalaries = [
+    ...sueldos.salaries
   ];
 
-  // Preservar IDs existentes, asignar UUID nuevo a los que no tienen
-  _preservarIdsExistentes(ss, allMovements);
-  allMovements.forEach(m => { if (!m.id) m.id = Utilities.getUuid(); });
-  allDetails.forEach(d => { if (!d.id) d.id = Utilities.getUuid(); });
+  Logger.log("Productos: " + productos.movements.length);
+  Logger.log("Sueldos: " + sueldos.movements.length);
+  Logger.log("Gastos: " + gastos.movements.length);
+  Logger.log("Pagos: " + pagos.movements.length);
 
-  // Vincula movement_id en details usando el id del movement (si existe)
-  _resolverMovementIds(allMovements, allDetails);
-
-  writeMovements(allMovements);
-  writeMovementDetails(allDetails);
-}
-
-// Lee la hoja MOVEMENTS actual y asigna el id a cada movement reconstruido
-// que matchee por fecha + cliente + tipo (clave natural de negocio)
-function _preservarIdsExistentes(ss, movements) {
-  const sheet = ss.getSheetByName("MOVEMENTS");
-  if (!sheet) return;
-
-  const existentes = sheet.getDataRange().getValues().slice(1);
-
-  // mapa: "fechaISO|cliente|tipo" → id
-  const idMap = {};
-  existentes.forEach(r => {
-    const id     = r[0];
-    const fecha  = r[1] instanceof Date ? r[1].toISOString().slice(0, 10) : String(r[1]).slice(0, 10);
-    const tipo   = String(r[2]);
-    const client = String(r[3]);
-    if (!id) return;
-    idMap[`${fecha}|${client}|${tipo}`] = id;
-  });
-
-  movements.forEach(m => {
-    const fecha = m.date instanceof Date ? m.date.toISOString().slice(0, 10) : String(m.date).slice(0, 10);
-    const clave = `${fecha}|${m.client}|${m.type}`;
-    if (idMap[clave]) m.id = idMap[clave];
-  });
+  return {
+    movements: _deduplicateById(allMovements),
+    items: allItems,
+    salaries: allSalaries
+  };
 }
 
 // ========================= PARSERS =========================
 
-// Procesa GRASA y HUESOS juntos compartiendo el mismo mapa de grupos.
-// Clave: fecha|cliente|tipo — sin producto, para que todos los productos
-// del mismo día y cliente queden en un solo movement con un detail por producto.
-function _parsearProductos(ss) {
+function procesarProductos(ss) {
   const hojaPrecios = ss.getSheetByName("PRECIOS");
   const preciosData = hojaPrecios ? hojaPrecios.getDataRange().getValues().slice(1) : [];
 
   const COL_INICIO = 2;
-  const grupos     = {};
+  const grupos = {};
 
   const hojasOrigen = [
-    { nombre: "GRASA",  productoDefault: "Grasa"  },
+    { nombre: "GRASA", productoDefault: "Grasa" },
     { nombre: "HUESOS", productoDefault: "Huesos" }
   ];
 
@@ -84,13 +56,13 @@ function _parsearProductos(ss) {
     const sheet = ss.getSheetByName(cfg.nombre);
     if (!sheet) return;
 
-    const datos  = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
-    const fechas = datos[0];
-    const filas  = datos.slice(1);
+    const datos = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+    const fechas = datos[0] || [];
+    const filas = datos.slice(1);
     let aserrinCordiez = 0;
 
     filas.forEach(fila => {
-      const cliente = fila[0];
+      const cliente = _asCleanString(fila[0]);
       if (!cliente || FILAS_IGNORAR.includes(cliente)) return;
 
       const tipo = CLIENTES_VENTA.includes(cliente) ? "Venta" : "Compra";
@@ -102,33 +74,40 @@ function _parsearProductos(ss) {
       }
 
       for (let col = COL_INICIO; col < fechas.length - 2; col++) {
-        const fecha    = fechas[col];
-        const cantidad = fila[col];
-        if (!fecha || !cantidad || cantidad === 0) continue;
+        const fecha = fechas[col];
+        const cantidad = _toNumber(fila[col]);
+        if (!_isValidDate(fecha) || !_isValidNumber(cantidad) || cantidad === 0) continue;
 
-        const unit_price = obtenerPrecio(preciosData, cliente, producto, fecha);
-        const subtotal   = unit_price * cantidad;
+        const unitPrice = _toNumber(obtenerPrecio(preciosData, cliente, producto, fecha));
+        if (!_isValidNumber(unitPrice)) continue;
 
-        const fechaStr = fecha instanceof Date ? fecha.toISOString().slice(0, 10) : String(fecha);
-        const clave    = `${fechaStr}|${cliente}|${tipo}`;
+        const subtotal = unitPrice * cantidad;
+        if (!_isValidNumber(subtotal)) continue;
 
-        if (!grupos[clave]) {
-          grupos[clave] = {
+        const dateKey = _toDateKey(fecha);
+        const id = `${dateKey}|${cliente}|${tipo}`;
+
+        if (!grupos[id]) {
+          grupos[id] = {
             movement: {
-              date: fecha, type: tipo, client: cliente,
-              employee: null, description: `${tipo} productos`,
-              amount: 0, source: "PRODUCTOS"
+              id,
+              type: tipo,
+              client: cliente,
+              date: new Date(fecha),
+              amount: 0,
+              description: `${tipo} productos`
             },
-            details: []
+            items: []
           };
         }
 
-        grupos[clave].movement.amount += subtotal;
-        grupos[clave].details.push({
-          _grupoRef:  grupos[clave].movement,
-          product:    producto,
-          quantity:   cantidad,
-          unit_price,
+        grupos[id].movement.amount += subtotal;
+        grupos[id].items.push({
+          movement_id: id,
+          client: cliente,
+          product: _asCleanString(producto),
+          quantity: cantidad,
+          unit_price: unitPrice,
           subtotal
         });
       }
@@ -136,124 +115,405 @@ function _parsearProductos(ss) {
   });
 
   const movements = [];
-  const details   = [];
+  const items = [];
+
   Object.values(grupos).forEach(g => {
+    if (!_isValidNumber(g.movement.amount)) return;
     movements.push(g.movement);
-    details.push(...g.details);
+
+    g.items.forEach(item => {
+      if (!item.client || !item.product) return;
+      if (!_isValidNumber(item.quantity) || !_isValidNumber(item.unit_price) || !_isValidNumber(item.subtotal)) return;
+      items.push(item);
+    });
   });
 
-  return { movements, details };
+  return { movements, items, salaries: [] };
 }
 
-// Solo adelantos, agrupados por fecha → 1 movement por día, 1 detail por empleado
-function parseSueldos(ss) {
+function procesarSueldos(ss) {
   const sheet = ss.getSheetByName("SUELDOS");
-  if (!sheet) return { movements: [], details: [] };
+  if (!sheet) return { movements: [], items: [], salaries: [] };
 
-  // Columnas SUELDOS: fecha | empleado | tipo | concepto | monto
-  const adelantos = sheet.getDataRange().getValues().slice(1).filter(r =>
-    r[0] && r[1] && String(r[2]).toLowerCase() === "adelanto"
-  );
+  const data = sheet.getDataRange().getValues();
+  const movements = [];
+  const salaries = [];
+  let processed = 0;
 
-  const grupos = {};
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (isEmptyRow(row)) continue;
+    if (isSummaryRow(row)) continue;
 
-  adelantos.forEach(r => {
-    const fecha    = new Date(r[0]);
-    const clave    = fecha.toISOString().slice(0, 10);
-    const empleado = String(r[1]).toUpperCase();
-    const monto    = Number(r[4]) || 0;
+    const date = row[0];
+    const employee = _asCleanString(row[1]);
+    const tipo = _asCleanString(row[2]);
+    const concepto = _asCleanString(row[3]);
+    const amount = Number(row[4]);
 
-    if (!grupos[clave]) {
-      grupos[clave] = {
-        movement: {
-          date: fecha, type: "Adelanto", client: null,
-          employee: null, description: "Adelantos", amount: 0, source: "SUELDOS"
-        },
-        details: []
-      };
+    if (tipo !== "Adelanto") continue;
+    if (!employee) continue;
+    if (!isValidMovementRow({ date, amount })) continue;
+
+    let id = _asCleanString(row[5]);
+    if (!id) {
+      id = "S-" + new Date(date).getTime() + "-" + employee;
     }
 
-    grupos[clave].movement.amount += monto;
-    grupos[clave].details.push({
-      _grupoRef:  grupos[clave].movement,
-      product:    empleado,
-      quantity:   1,
-      unit_price: monto,
-      subtotal:   monto
+    movements.push({
+      id,
+      type: "Sueldo",
+      date,
+      amount,
+      description: concepto || "Sueldo"
     });
-  });
 
-  const movements = [];
-  const details   = [];
-  Object.values(grupos).forEach(g => {
-    movements.push(g.movement);
-    details.push(...g.details);
-  });
+    salaries.push({
+      movement_id: id,
+      employee,
+      subtotal: amount
+    });
 
-  return { movements, details };
+    processed++;
+  }
+
+  Logger.log("Sueldos procesados: " + processed);
+  return { movements, items: [], salaries };
 }
 
-// Gastos: 1 movement + 1 detail por fila, sin agrupamiento
-function parseGastos(ss) {
+function procesarGastos(ss) {
   const sheet = ss.getSheetByName("GASTOS");
-  if (!sheet) return { movements: [], details: [] };
+  if (!sheet) return { movements: [], items: [], salaries: [] };
 
-  // Columnas GASTOS: fecha | descripción | monto
+  const data = sheet.getDataRange().getValues();
   const movements = [];
-  const details   = [];
+  let processed = 0;
 
-  sheet.getDataRange().getValues().slice(1)
-    .filter(r => r[0] && r[2])
-    .forEach(r => {
-      const desc  = String(r[1]) || "Gasto";
-      const monto = Number(r[2]) || 0;
-      const mov   = {
-        date: new Date(r[0]), type: "Gasto", client: null,
-        employee: null, description: desc, amount: monto, source: "GASTOS"
-      };
-      movements.push(mov);
-      details.push({
-        _grupoRef:  mov,
-        product:    desc,
-        quantity:   1,
-        unit_price: monto,
-        subtotal:   monto
-      });
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (isEmptyRow(row)) continue;
+    if (isSummaryRow(row)) continue;
+
+    const date = row[0];
+    const tipo = _asCleanString(row[1]);
+    const amount = Number(row[2]);
+
+    if (!isValidMovementRow({ date, amount })) continue;
+
+    let id = _asCleanString(row[3]);
+    if (!id) {
+      id = "G-" + new Date(date).getTime() + "-" + i;
+    }
+
+    movements.push({
+      id,
+      type: "Gasto",
+      date,
+      amount,
+      description: tipo
     });
 
-  return { movements, details };
+    processed++;
+  }
+
+  Logger.log("Gastos procesados: " + processed);
+  return { movements, items: [], salaries: [] };
 }
 
-// ========================= VINCULAR IDs =========================
+function procesarPagosClientes(ss) {
+  const sheet = ss.getSheetByName("CUENTAS");
+  if (!sheet) return { movements: [], items: [], salaries: [] };
 
-// Usa la referencia al objeto movement para asignar movement_id en cada detail.
-// Si el movement no tiene id (es nuevo), movement_id queda undefined → se escribe vacío.
-function _resolverMovementIds(allMovements, allDetails) {
-  const idMap = new Map(allMovements.map(m => [m, m.id]));
-  allDetails.forEach(d => {
-    d.movement_id = idMap.get(d._grupoRef);
-    delete d._grupoRef;
+  const data = sheet.getDataRange().getValues();
+  const movements = [];
+  const items = [];
+  let processed = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (isEmptyRow(row)) continue;
+    if (isSummaryRow(row)) continue;
+
+    const date = row[0];
+    const client = _asCleanString(row[1]);
+    const concepto = _asCleanString(row[2]);
+    const haber = Number(row[8]);
+
+    if (concepto !== "Pago de Fabian") continue;
+    if (!client) continue;
+    if (!isValidMovementRow({ date, amount: haber })) continue;
+
+    let id = _asCleanString(row[9]);
+    if (!id) {
+      id = "P-" + new Date(date).getTime() + "-" + client;
+    }
+
+    movements.push({
+      id,
+      type: "Pago",
+      client,
+      date,
+      amount: haber,
+      description: concepto
+    });
+
+    items.push({
+      movement_id: id,
+      client,
+      subtotal: haber
+    });
+
+    processed++;
+  }
+
+  Logger.log("Pagos procesados: " + processed);
+  return { movements, items, salaries: [] };
+}
+
+function _deduplicateById(movements) {
+  const seen = {};
+  const out = [];
+
+  (movements || []).forEach(m => {
+    const id = _asCleanString(m && m.id);
+    if (!id || seen[id]) return;
+    seen[id] = true;
+    out.push(m);
   });
+
+  return out;
+}
+
+// ========================= MERGE FINAL =========================
+
+function _mergeFinal(allMovements, allItems, allSalaries) {
+  const movementIds = {};
+  const movements = [];
+
+  allMovements.forEach(m => {
+    const id = _asCleanString(m.id);
+    if (!id || movementIds[id]) return;
+    movementIds[id] = true;
+    movements.push(m);
+  });
+
+  const itemKeys = {};
+  const items = [];
+
+  allItems.forEach(it => {
+    const movementId = _asCleanString(it.movement_id);
+    if (!movementId || !movementIds[movementId]) return;
+
+    const key = JSON.stringify([
+      movementId,
+      _asCleanString(it.client),
+      _asCleanString(it.product),
+      _toNumber(it.quantity),
+      _toNumber(it.unit_price),
+      _toNumber(it.subtotal)
+    ]);
+
+    if (itemKeys[key]) return;
+    itemKeys[key] = true;
+
+    const out = {
+      movement_id: movementId,
+      client: _asCleanString(it.client),
+      subtotal: _toNumber(it.subtotal)
+    };
+
+    if (_asCleanString(it.product)) out.product = _asCleanString(it.product);
+    if (_isValidNumber(_toNumber(it.quantity))) out.quantity = _toNumber(it.quantity);
+    if (_isValidNumber(_toNumber(it.unit_price))) out.unit_price = _toNumber(it.unit_price);
+
+    if (!out.client || !_isValidNumber(out.subtotal)) return;
+    if (out.product && (!_isValidNumber(out.quantity) || !_isValidNumber(out.unit_price))) return;
+
+    items.push(out);
+  });
+
+  const salaryKeys = {};
+  const salaries = [];
+
+  allSalaries.forEach(s => {
+    const movementId = _asCleanString(s.movement_id);
+    const employee = _asCleanString(s.employee);
+    const subtotal = _toNumber(s.subtotal);
+
+    if (!movementId || !movementIds[movementId] || !employee || !_isValidNumber(subtotal)) return;
+
+    const key = `${movementId}|${employee}|${subtotal}`;
+    if (salaryKeys[key]) return;
+    salaryKeys[key] = true;
+
+    salaries.push({ movement_id: movementId, employee, subtotal });
+  });
+
+  return { movements, items, salaries };
+}
+
+// ========================= HELPERS =========================
+
+function isEmptyRow(row) {
+  if (!Array.isArray(row) || row.length === 0) return true;
+  return row.every(cell => cell === "" || cell === null || cell === undefined);
+}
+
+function isSummaryRow(row) {
+  if (!Array.isArray(row)) return false;
+  return row.some(cell =>
+    typeof cell === "string" &&
+    cell.toUpperCase().includes("TOTAL")
+  );
+}
+
+function isValidMovementRow({ date, amount }) {
+  if (!date) return false;
+  if (amount === null || amount === undefined || amount === "") return false;
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return false;
+  if (n <= 0) return false;
+  return true;
+}
+
+function _parseRowWithOptionalId(row, dateIndexWithoutId) {
+  const first = row[0];
+  const hasId = !_isValidDate(first) && _asCleanString(first) !== "";
+  const id = hasId ? first : "";
+  const cells = hasId ? row.slice(1) : row.slice(0);
+  const date = cells[dateIndexWithoutId];
+  return { id, date, cells };
+}
+
+function _isValidDate(value) {
+  return value instanceof Date && !isNaN(value.getTime());
+}
+
+function _toDateKey(value) {
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function _toNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function _isValidNumber(value) {
+  return Number.isFinite(value);
+}
+
+function _asCleanString(value) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
 }
 
 // ========================= DISTRIBUIR =========================
 
 function distribuirMovimientos() {
-  const movimientos = readMovementsSheet();
+  const movements = readMovementsSheet();
+  const items = _readMovementItemsSheet();
+  const salaries = _readMovementSalariesSheet();
 
-  const buckets = { GRASA: [], HUESOS: [], SUELDOS: [], GASTOS: [] };
+  const bucketCompraVenta = { GRASA: [], HUESOS: [] };
+  const bucketGastos = [];
+  const bucketSueldos = [];
+  const bucketCuentas = [];
 
-  movimientos.forEach(m => {
-    if ((m.type === "Compra" || m.type === "Venta") && m.source === "GRASA")  buckets.GRASA.push(m);
-    if ((m.type === "Compra" || m.type === "Venta") && m.source === "HUESOS") buckets.HUESOS.push(m);
-    if (m.type === "Adelanto") buckets.SUELDOS.push(m);
-    if (m.type === "Gasto")    buckets.GASTOS.push(m);
+  const itemsByMovement = {};
+  items.forEach((it) => {
+    const movementId = _asCleanString(it.movement_id);
+    if (!movementId || movementId.indexOf("-") !== -1) return;
+    if (!itemsByMovement[movementId]) itemsByMovement[movementId] = [];
+    itemsByMovement[movementId].push(it);
   });
 
-  _writeSheetProducto(buckets.GRASA,  "GRASA");
-  _writeSheetProducto(buckets.HUESOS, "HUESOS");
-  _writeSheetGastos(buckets.GASTOS);
-  _writeSheetSueldos(buckets.SUELDOS);
+  const salariesByMovement = {};
+  salaries.forEach((s) => {
+    const movementId = _asCleanString(s.movement_id);
+    if (!movementId || movementId.indexOf("-") !== -1) return;
+    if (!salariesByMovement[movementId]) salariesByMovement[movementId] = [];
+    salariesByMovement[movementId].push(s);
+  });
+
+  movements.forEach((m) => {
+    const id = _asCleanString(m.id);
+    const type = _asCleanString(m.type);
+    if (!id || id.indexOf("-") !== -1) return;
+    if (!type) return;
+
+    switch (type) {
+      case "Entrega":
+      case "entrega":
+      case "entrega_dinero":
+        return;
+      case "Compra":
+      case "Venta":
+      case "compra":
+      case "venta": {
+      const movementItems = itemsByMovement[id] || [];
+      movementItems.forEach((it) => {
+        const client = _asCleanString(it.client);
+        const product = _asCleanString(it.product);
+        const quantity = _toNumber(it.quantity);
+        if (!client || !product || !_isValidNumber(quantity)) return;
+
+        const sheetName = String(product).toUpperCase().indexOf("HUES") !== -1 || String(product).toUpperCase().indexOf("ASERRIN") !== -1
+          ? "HUESOS"
+          : "GRASA";
+
+        bucketCompraVenta[sheetName].push({
+          date: m.date,
+            client,
+            type: String(type).toLowerCase() === "compra" ? "Compra" : "Venta",
+          product,
+          quantity
+        });
+      });
+      return;
+      }
+      case "Gasto":
+      case "gasto": {
+      const amount = _toNumber(m.amount);
+      if (!_isValidNumber(amount)) return;
+      bucketGastos.push({ date: m.date, description: _asCleanString(m.description) || "Gasto", amount });
+      return;
+      }
+      case "Sueldo":
+      case "sueldo": {
+      (salariesByMovement[id] || []).forEach((s) => {
+        const employee = _asCleanString(s.employee);
+        const subtotal = _toNumber(s.subtotal);
+        if (!employee || !_isValidNumber(subtotal)) return;
+        bucketSueldos.push({ date: m.date, employee, description: _asCleanString(m.description) || "Sueldo", amount: subtotal });
+      });
+      return;
+      }
+      case "Pago":
+      case "pago":
+      case "pago_cliente": {
+      (itemsByMovement[id] || []).forEach((it) => {
+        const client = _asCleanString(it.client);
+        const subtotal = _toNumber(it.subtotal);
+        if (!client || !_isValidNumber(subtotal)) return;
+        bucketCuentas.push({
+          date: m.date,
+          client,
+          concepto: "Pago de Fabian",
+          subtotal
+        });
+      });
+        return;
+      }
+      default:
+        return;
+    }
+  });
+
+  _writeSheetProducto(bucketCompraVenta.GRASA, "GRASA");
+  _writeSheetProducto(bucketCompraVenta.HUESOS, "HUESOS");
+  _writeSheetGastos(bucketGastos);
+  _writeSheetSueldos(bucketSueldos);
+  _writeSheetCuentas(bucketCuentas);
 }
 
 function _writeSheetProducto(data, nombre) {
@@ -261,9 +521,9 @@ function _writeSheetProducto(data, nombre) {
   sheet.clear();
   if (!data.length) return;
 
-  sheet.appendRow(["Fecha", "Cliente", "Tipo", "Descripción", "Monto"]);
+  sheet.appendRow(["Fecha", "Cliente", "Tipo", "Producto", "Cantidad"]);
 
-  const rows = data.map(m => [m.date, m.client, m.type, m.description, m.amount]);
+  const rows = data.map((m) => [m.date, m.client, m.type, m.product, m.quantity]);
   sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
   aplicarFormatoTablaGenerica(sheet, 1, [5]);
 }
@@ -285,9 +545,43 @@ function _writeSheetSueldos(data) {
   sheet.clear();
   if (!data.length) return;
 
-  sheet.appendRow(["Fecha", "Descripción", "Monto"]);
+  sheet.appendRow(["Fecha", "Empleado", "Tipo", "Descripción", "Monto"]);
 
-  const rows = data.map(m => [m.date, m.description, m.amount]);
+  const rows = data.map((m) => [m.date, m.employee, "Adelanto", m.description, m.amount]);
   sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
-  aplicarFormatoTablaGenerica(sheet, 1, [3]);
+  aplicarFormatoTablaGenerica(sheet, 1, [5]);
+}
+
+function _writeSheetCuentas(data) {
+  const sheet = _getOrCreateSheet("CUENTAS");
+  sheet.clear();
+  if (!data.length) return;
+
+  sheet.appendRow(["Fecha", "Cliente", "Concepto", "", "", "", "", "Debe", "Haber"]);
+  const rows = data.map((m) => [m.date, m.client, m.concepto, "", "", "", "", "", m.subtotal]);
+  sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+  aplicarFormatoTablaGenerica(sheet, 1, [8, 9]);
+}
+
+function _readMovementItemsSheet() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("MOVEMENT_ITEMS");
+  if (!sheet) return [];
+  return sheet.getDataRange().getValues().slice(1).map((r) => ({
+    movement_id: r[0],
+    client: r[1],
+    product: r[2],
+    quantity: r[3],
+    unit_price: r[4],
+    subtotal: r[5]
+  }));
+}
+
+function _readMovementSalariesSheet() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("MOVEMENT_SALARIES");
+  if (!sheet) return [];
+  return sheet.getDataRange().getValues().slice(1).map((r) => ({
+    movement_id: r[0],
+    employee: r[1],
+    subtotal: r[2]
+  }));
 }

@@ -3,7 +3,7 @@ from app.services.client_service import (
     ClientNotFoundError,
     ClientService,
 )
-from app.services.sync_service import SyncImportError, SyncService
+from app.services.sync_service import SyncService
 from app.services.sync_clients_service import SyncClientsService
 from app.services.sync_movements_service import SyncMovementsService
 from app.services.sync_prices_service import SyncPricesService
@@ -14,7 +14,6 @@ __all__ = [
     "ClientAlreadyExistsError",
     "ClientNotFoundError",
     "SyncService",
-    "SyncImportError",
     "SyncClientsService",
     "SyncPricesService",
     "SyncMovementsService",

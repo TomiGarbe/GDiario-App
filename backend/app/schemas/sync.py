@@ -96,7 +96,7 @@ class SyncPricePayload(BaseModel):
 
 
 class SyncImportResponse(BaseModel):
-    period_id: UUID
+    period_id: int
     deleted_previous_sheet_movements: int
     imported_movements: int
     failed_movements: int
@@ -138,7 +138,7 @@ class SyncPeriodRequest(BaseModel):
 
 
 class SyncPeriodResponse(BaseModel):
-    period_id: UUID
+    period_id: int
     created: bool
 
 
@@ -191,7 +191,7 @@ class SyncMovementByIdPayload(BaseModel):
 
 
 class SyncMovementsRequest(BaseModel):
-    period_id: UUID
+    period_id: int
     is_first_batch: bool = True
     movements: list[SyncMovementByIdPayload] = Field(default_factory=list)
 
@@ -204,7 +204,7 @@ class SyncMovementsResponse(BaseModel):
 
 class MovementSyncPayload(BaseModel):
     id: UUID
-    period_id: UUID
+    period_id: int
     date: date
     type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
     amount: Decimal

@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.models.client import Client
 from app.schemas.client import ClientCreate
-from app.utils.name_normalization import normalize_name
 
 
 class ClientAlreadyExistsError(Exception):
@@ -21,12 +20,7 @@ class ClientNotFoundError(Exception):
 class ClientService:
     @staticmethod
     def create_client(db: Session, data: ClientCreate) -> Client:
-        clean_name = " ".join(data.name.strip().split())
-        client = Client(
-            name=clean_name,
-            normalized_name=normalize_name(clean_name),
-            is_special=data.is_special,
-        )
+        client = Client(name=" ".join(data.name.strip().split()))
         db.add(client)
         try:
             db.commit()

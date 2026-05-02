@@ -69,7 +69,15 @@ function accionResumenSueldos() {
 
 function accionReconstruirMovimientos() {
   try {
-    reconstruirMovimientos();
+    Logger.log("Reconstrucción iniciada");
+    const result = reconstruirMovimientos() || {};
+    const movements = Array.isArray(result.movements) ? result.movements : [];
+    const items = Array.isArray(result.items) ? result.items : [];
+    const salaries = Array.isArray(result.salaries) ? result.salaries : [];
+    writeMovements(movements);
+    writeMovementItems(items);
+    writeMovementSalaries(salaries);
+    Logger.log("Reconstrucción finalizada");
     return notificar('✅ Movimientos reconstruidos');
   } catch (e) {
     return notificar('⚠️ ' + e.message);

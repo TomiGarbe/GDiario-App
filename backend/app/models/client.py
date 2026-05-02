@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, Index, String, func, text
+from sqlalchemy import Index, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.db import Base
+from app.utils.name_normalization import normalize_name
 
 if TYPE_CHECKING:
     from app.models.movement_client_payment import MovementClientPayment
@@ -23,8 +24,7 @@ class Client(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
-    is_special: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    name: Mapped[str] = mapped_column(Text, nullable=False)
 
     movement_items: Mapped[list["MovementItem"]] = relationship("MovementItem", back_populates="client")
     movement_client_payments: Mapped[list["MovementClientPayment"]] = relationship(
@@ -32,6 +32,10 @@ class Client(Base):
         back_populates="client",
     )
     prices: Mapped[list["Price"]] = relationship("Price", back_populates="client", cascade="all, delete-orphan")
+
+    @validates("name")
+    def _normalize_name(self, _key: str, value: str) -> str:
+        return normalize_name(value)
 
 
 Index("uq_clients_name_ci", func.lower(Client.name), unique=True)

@@ -12,8 +12,8 @@ from app.models.movement import Movement
 from app.models.movement import MovementType
 from app.models.product import Product
 from app.repositories.movement_repository import MovementRepository
+from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
 from app.services.validation_service import ValidationService
-from app.utils.name_resolver import normalize_entity_name, resolve_or_create_entities
 
 
 class SyncService:
@@ -58,7 +58,7 @@ class SyncService:
         existing_movement_ids = MovementRepository.existing_movement_ids(db, movement_ids)
         missing_movement_ids = movement_ids - existing_movement_ids
         if missing_movement_ids:
-            raise ValueError(f"Some movement_id do not exist: {sorted(str(mid) for mid in missing_movement_ids)}")
+            raise ValueError("Movement not found")
         movement_types = SyncService._get_movement_types(db, movement_ids)
         for item in item_list:
             ValidationService.validate_item_fields(item)
@@ -97,7 +97,7 @@ class SyncService:
         existing_movement_ids = MovementRepository.existing_movement_ids(db, movement_ids)
         missing_movement_ids = movement_ids - existing_movement_ids
         if missing_movement_ids:
-            raise ValueError(f"Some movement_id do not exist: {sorted(str(mid) for mid in missing_movement_ids)}")
+            raise ValueError("Movement not found")
         movement_types = SyncService._get_movement_types(db, movement_ids)
         for item in salary_list:
             ValidationService.validate_salary_fields(item)
@@ -132,7 +132,7 @@ class SyncService:
         existing_movement_ids = MovementRepository.existing_movement_ids(db, movement_ids)
         missing_movement_ids = movement_ids - existing_movement_ids
         if missing_movement_ids:
-            raise ValueError(f"Some movement_id do not exist: {sorted(str(mid) for mid in missing_movement_ids)}")
+            raise ValueError("Movement not found")
         movement_types = SyncService._get_movement_types(db, movement_ids)
         for item in client_payment_list:
             ValidationService.validate_client_payment_fields(item)

@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "../lib/api";
-import { balanceService } from "../services/balance";
 import type { Balance } from "../types/api";
+import { movementService } from "../services/movements";
 
 export function useBalance(initialDate: string) {
   const [date, setDate] = useState(initialDate);
@@ -16,7 +16,10 @@ export function useBalance(initialDate: string) {
     try {
       setLoading(true);
       setError(null);
-      const data = await balanceService.getByDate(targetDate);
+      const data = await movementService.balance({
+        date_from: targetDate,
+        date_to: targetDate,
+      });
       setBalance(data);
       setDate(targetDate);
     } catch (err) {

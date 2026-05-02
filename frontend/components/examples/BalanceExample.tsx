@@ -21,9 +21,6 @@ export default function BalanceExample() {
 
       {balance && (
         <div>
-          <p>Date: {balance.date}</p>
-          <p>Total debe: {balance.total_debe}</p>
-          <p>Total haber: {balance.total_haber}</p>
           <p>Balance: {balance.balance}</p>
         </div>
       )}

@@ -47,47 +47,97 @@ function mapMovementTypeToLegacy(mov) {
 }
 
 function mapBackendMovementToLegacy(mov) {
-  var details = Array.isArray(mov && mov.details) ? mov.details : [];
-  var firstProduct = details.find(function(d) { return !!(d && d.product); }) || null;
+  var m = mov || {};
+  var num = function(v) { return Number(v == null ? 0 : v); };
+  var type = String(m.type || '').toLowerCase();
+  var items = Array.isArray(m.items) ? m.items : [];
+  var salaries = Array.isArray(m.salaries) ? m.salaries : [];
+  var clientPayments = Array.isArray(m.client_payments) ? m.client_payments : [];
 
-  var datos = null;
-  var productos = details
-    .filter(function(d) { return !!(d && d.product); })
-    .map(function(d) {
+  switch (type) {
+    case 'compra':
+    case 'venta':
       return {
-        producto: String(d.product || '').trim(),
-        kg: d.quantity != null ? toNum(d.quantity) : 0,
-        precio: d.unit_price != null ? toNum(d.unit_price) : 0
+        id: m.id,
+        fecha: m.date,
+        tipo: type === 'compra' ? 'Compra' : 'Descarga',
+        cliente: items[0] && items[0].client ? items[0].client : '',
+        producto: items[0] && items[0].product ? items[0].product : '',
+        kg: num(items[0] && items[0].quantity),
+        monto: num(m.amount),
+        datos: {
+          productos: items.map(function(i) {
+            return {
+              producto: i && i.product ? i.product : '',
+              kg: num(i && i.quantity),
+              precio: num(i && i.unit_price)
+            };
+          })
+        },
+        detalle: m.description || '',
+        editable: true
       };
-    })
-    .filter(function(item) { return !!item.producto; });
-
-  var empleados = details
-    .filter(function(d) { return !!(d && d.employee); })
-    .map(function(d) {
+    case 'sueldo':
       return {
-        nombre: String(d.employee || '').trim(),
-        monto: d.subtotal != null ? toNum(d.subtotal) : toNum(d.unit_price)
+        id: m.id,
+        fecha: m.date,
+        tipo: 'Gasto',
+        cliente: '',
+        monto: num(m.amount),
+        datos: {
+          empleados: salaries.map(function(s) {
+            return {
+              nombre: s && s.employee ? s.employee : '',
+              monto: num(s && s.subtotal)
+            };
+          })
+        },
+        detalle: m.description || 'Ayudantes',
+        editable: true
       };
-    })
-    .filter(function(item) { return !!item.nombre; });
-
-  if (productos.length) datos = { productos: productos };
-  if (empleados.length) datos = Object.assign({}, datos || {}, { empleados: empleados });
-
-  return {
-    id: String(mov && mov.id || '').trim(),
-    fecha: String(mov && mov.date || '').trim(),
-    tipo: mapMovementTypeToLegacy(mov),
-    cliente: mov && mov.client ? String(mov.client).trim() : '',
-    detalle: mov && mov.description ? String(mov.description).trim() : '',
-    producto: firstProduct && firstProduct.product ? String(firstProduct.product).trim() : '',
-    kg: firstProduct && firstProduct.quantity != null ? toNum(firstProduct.quantity) : 0,
-    monto: mov && mov.amount != null ? toNum(mov.amount) : 0,
-    clase: '',
-    datos: datos,
-    editable: true
-  };
+    case 'gasto':
+      return {
+        id: m.id,
+        fecha: m.date,
+        tipo: 'Gasto',
+        cliente: '',
+        monto: num(m.amount),
+        detalle: m.description || 'Gasto',
+        datos: null,
+        editable: true
+      };
+    case 'pago_cliente':
+      return {
+        id: m.id,
+        fecha: m.date,
+        tipo: 'Pago a cliente',
+        cliente: clientPayments[0] && clientPayments[0].client ? clientPayments[0].client : '',
+        monto: num(m.amount),
+        detalle: m.description || '',
+        editable: true
+      };
+    case 'entrega_dinero':
+      return {
+        id: m.id,
+        fecha: m.date,
+        tipo: 'Entrega de dinero',
+        cliente: '',
+        monto: num(m.amount),
+        detalle: m.description || 'Entrega de dinero',
+        editable: false
+      };
+    default:
+      return {
+        id: m.id,
+        fecha: m.date,
+        tipo: 'Movimiento',
+        cliente: '',
+        monto: num(m.amount),
+        detalle: m.description || '',
+        datos: null,
+        editable: true
+      };
+  }
 }
 
 function buildCompraDetails(item) {
@@ -256,29 +306,11 @@ function request(path, opts) {
 }
 
 function getInitialData() {
-  return Promise.all([
-    request('/clients').catch(function() { return []; }),
-    request('/movements').catch(function() { return []; })
-  ]).then(function(results) {
-    var clientsPayload = Array.isArray(results[0]) ? results[0] : [];
-    var movements = Array.isArray(results[1]) ? results[1] : [];
-
-    var clientes = clientsPayload
-      .map(function(c) { return c && c.name ? String(c.name).trim() : ''; })
-      .filter(Boolean);
-
-    var productosSet = Object.create(null);
-    movements.forEach(function(mov) {
-      var details = Array.isArray(mov && mov.details) ? mov.details : [];
-      details.forEach(function(d) {
-        var p = String(d && d.product || '').trim();
-        if (p) productosSet[p.toUpperCase()] = p;
-      });
-    });
-
+  return request('/movements/entities').then(function(entities) {
+    var payload = entities || {};
     return {
-      clientes: clientes,
-      productos: Object.keys(productosSet).map(function(k) { return productosSet[k]; }),
+      clientes: Array.isArray(payload.clients) ? payload.clients : [],
+      productos: Array.isArray(payload.products) ? payload.products : [],
       precios: {},
       clientesEspeciales: []
     };
@@ -313,10 +345,7 @@ function fetchConAuth(data) {
 
   if (action === 'obtenerSaldo') {
     var fecha = String(payload.fecha || payload.date || getTodayIso()).trim();
-    return request('/movements/balance?date=' + encodeURIComponent(fecha))
-      .catch(function() {
-        return request('/balance?date=' + encodeURIComponent(fecha));
-      })
+    return request('/movements/balance?date_from=' + encodeURIComponent(fecha) + '&date_to=' + encodeURIComponent(fecha))
       .then(function(r) {
         return { saldo: toNum(r && r.balance) };
       });
@@ -423,3 +452,4 @@ window.apiLoginWithGoogle = apiLoginWithGoogle;
 window.fetchConAuth = fetchConAuth;
 window.api = api;
 window.API_BASE_URL = API_BASE_URL;
+

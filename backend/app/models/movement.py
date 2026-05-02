@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Date, Enum, ForeignKey, Numeric, Text, text
+from sqlalchemy import Date, DateTime, Enum, Integer, Numeric, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from app.models.movement_client_payment import MovementClientPayment
     from app.models.movement_item import MovementItem
     from app.models.movement_salary import MovementSalary
-    from app.models.period import Period
 
 
 class MovementType(str, enum.Enum):
@@ -36,12 +35,7 @@ class Movement(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    period_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("periods.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
+    period_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     type: Mapped[MovementType] = mapped_column(
         Enum(MovementType, name="movement_type", native_enum=True),
@@ -51,11 +45,11 @@ class Movement(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime,
         nullable=False,
         server_default=text("now()"),
     )
 
-    period: Mapped["Period"] = relationship("Period", back_populates="movements")
     items: Mapped[list["MovementItem"]] = relationship(
         "MovementItem",
         back_populates="movement",

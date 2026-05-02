@@ -1,57 +1,41 @@
-export type MovementKind = "compra" | "venta" | "gasto" | "pago" | "sueldo";
-export type MovementDetailKind = "producto" | "empleado" | "gasto";
+export type MovementKind =
+  | "compra"
+  | "venta"
+  | "gasto"
+  | "sueldo"
+  | "entrega_dinero"
+  | "pago_cliente";
 
-export interface MovementDetail {
-  id: string;
-  type: MovementDetailKind;
-  product: string | null;
-  employee: string | null;
-  quantity: string | null;
-  unit_price: string | null;
-  subtotal: string | null;
+export interface MovementItem {
+  client: string;
+  product: string;
+  quantity: string;
+  unit_price: string;
+  subtotal: string;
+}
+
+export interface MovementSalary {
+  employee: string;
+  subtotal: string;
+}
+
+export interface MovementClientPayment {
+  client: string;
+  subtotal: string;
 }
 
 export interface Movement {
   id: string;
   date: string;
   type: MovementKind;
-  client: string | null;
-  employee: string | null;
   amount: string;
   description: string | null;
-  details: MovementDetail[];
-}
-
-export interface MovementDetailInput {
-  type: MovementDetailKind;
-  product?: string | null;
-  employee?: string | null;
-  quantity?: number | string | null;
-  unit_price?: number | string | null;
-}
-
-export interface MovementCreateInput {
-  date: string;
-  type: MovementKind;
-  client?: string | null;
-  employee?: string | null;
-  description?: string | null;
-  details?: MovementDetailInput[];
-}
-
-export interface MovementUpdateInput {
-  date?: string;
-  type?: MovementKind;
-  client?: string | null;
-  employee?: string | null;
-  description?: string | null;
-  details: MovementDetailInput[];
+  items: MovementItem[];
+  salaries: MovementSalary[];
+  client_payments: MovementClientPayment[];
 }
 
 export interface Balance {
-  date: string;
-  total_debe: string;
-  total_haber: string;
   balance: string;
 }
 

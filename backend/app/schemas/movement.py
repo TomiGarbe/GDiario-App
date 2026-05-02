@@ -2,90 +2,75 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
-class MovementDetailCreate(BaseModel):
-    type: Literal["producto", "empleado", "gasto"]
-    product: str | None = Field(default=None, max_length=120)
-    employee: str | None = Field(default=None, max_length=120)
-    quantity: Decimal | None = None
-    unit_price: Decimal | None = None
+class MovementItemIn(BaseModel):
+    client: str = Field(..., min_length=1, max_length=120)
+    product: str = Field(..., min_length=1, max_length=120)
+    quantity: Decimal
+    unit_price: Decimal
+    subtotal: Decimal | None = None
 
-    @field_validator("product", "employee")
+    @field_validator("client", "product")
     @classmethod
-    def validate_optional_names(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        clean = value.strip()
-        return clean or None
+    def validate_name(cls, value: str) -> str:
+        clean = " ".join(value.strip().split())
+        if not clean:
+            raise ValueError("value cannot be empty")
+        return clean
+
+
+class MovementSalaryIn(BaseModel):
+    employee: str = Field(..., min_length=1, max_length=120)
+    subtotal: Decimal
+
+    @field_validator("employee")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        clean = " ".join(value.strip().split())
+        if not clean:
+            raise ValueError("employee cannot be empty")
+        return clean
+
+
+class MovementClientPaymentIn(BaseModel):
+    client: str = Field(..., min_length=1, max_length=120)
+    subtotal: Decimal
+
+    @field_validator("client")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        clean = " ".join(value.strip().split())
+        if not clean:
+            raise ValueError("client cannot be empty")
+        return clean
 
 
 class MovementCreate(BaseModel):
+    period_id: int
     date: date
-    type: Literal["compra", "venta", "gasto", "pago", "sueldo", "entrega_dinero", "pago_cliente"]
-    client: str | None = Field(default=None, max_length=120)
-    employee: str | None = Field(default=None, max_length=120)
-    description: str | None = Field(default=None, max_length=500)
-    details: list[MovementDetailCreate] = Field(default_factory=list)
-
-    @field_validator("client", "employee", "description")
-    @classmethod
-    def validate_optional_fields(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        clean = value.strip()
-        return clean or None
-
-
-class MovementUpdate(BaseModel):
-    date: Optional[date] = None
-    type: Literal["compra", "venta", "gasto", "pago", "sueldo", "entrega_dinero", "pago_cliente"] | None = None
-    client: str | None = Field(default=None, max_length=120)
-    employee: str | None = Field(default=None, max_length=120)
-    description: str | None = Field(default=None, max_length=500)
-    details: list[MovementDetailCreate]
-
-    @field_validator("client", "employee", "description")
-    @classmethod
-    def validate_optional_fields(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        clean = value.strip()
-        return clean or None
-
-
-class MovementDetailResponse(BaseModel):
-    id: UUID
-    type: str
-    product: str | None
-    employee: str | None
-    quantity: Decimal | None
-    unit_price: Decimal | None
-    subtotal: Decimal | None
-
-
-class MovementResponse(BaseModel):
-    id: UUID
-    date: date
-    type: str
-    client: str | None
-    employee: str | None
+    type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
     amount: Decimal
-    description: str | None
-    details: list[MovementDetailResponse]
+    description: str | None = Field(default=None, max_length=500)
+    items: list[MovementItemIn] | None = None
+    salaries: list[MovementSalaryIn] | None = None
+    client_payments: list[MovementClientPaymentIn] | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        clean = value.strip()
+        return clean or None
 
 
-class BalanceResponse(BaseModel):
-    date: date
-    total_debe: Decimal
-    total_haber: Decimal
-    balance: Decimal
+class MovementUpdate(MovementCreate):
+    pass
 
 
 class MovementItemOut(BaseModel):

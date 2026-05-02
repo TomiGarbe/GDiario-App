@@ -1,18 +1,13 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import Date, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-
-if TYPE_CHECKING:
-    from app.models.movement import Movement
-
 
 class Period(Base):
     __tablename__ = "periods"
@@ -32,8 +27,5 @@ class Period(Base):
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
 
-    movements: Mapped[list["Movement"]] = relationship(
-        "Movement",
-        back_populates="period",
-        cascade="all, delete-orphan",
-    )
+    # Movement.period_id is an external period number (int), not an FK to periods.id.
+    # Keep this model independent to avoid invalid ORM relationship configuration.

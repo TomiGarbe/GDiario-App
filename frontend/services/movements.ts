@@ -1,27 +1,37 @@
 import { request } from "../lib/api";
-import type { Movement, MovementCreateInput, MovementUpdateInput } from "../types/api";
-
-const BASE_PATH = "/movements";
+import { qs } from "../lib/qs";
+import type { Balance, Movement } from "../types/api";
 
 export const movementService = {
-  getAll: () => request<Movement[]>(BASE_PATH),
+  list: (params?: Record<string, any>) =>
+    request<Movement[]>(`/movements?${qs(params)}`),
 
-  getById: (id: string) => request<Movement>(`${BASE_PATH}/${id}`),
+  getById: (id: string) => request<Movement>(`/movements/${id}`),
 
-  create: (data: MovementCreateInput) =>
-    request<Movement>(BASE_PATH, {
+  create: (payload: any) =>
+    request<Movement>("/movements/", {
       method: "POST",
-      body: data,
+      body: payload,
     }),
 
-  update: (id: string, data: MovementUpdateInput) =>
-    request<Movement>(`${BASE_PATH}/${id}`, {
+  update: (id: string, payload: any) =>
+    request<Movement>(`/movements/${id}`, {
       method: "PATCH",
-      body: data,
+      body: payload,
     }),
 
   remove: (id: string) =>
-    request<void>(`${BASE_PATH}/${id}`, {
+    request<void>(`/movements/${id}`, {
       method: "DELETE",
     }),
+
+  entities: () =>
+    request<{
+      clients: string[];
+      products: string[];
+      employees: string[];
+    }>("/movements/entities"),
+
+  balance: (params?: Record<string, any>) =>
+    request<Balance>(`/movements/balance?${qs(params)}`),
 };

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -12,7 +11,7 @@ class SyncMovementsService:
     @staticmethod
     def sync_movements(
         db: Session,
-        period_id: UUID,
+        period_id: int,
         items: Iterable,
         is_first_batch: bool,
     ) -> tuple[int, int, int]:

@@ -16,6 +16,42 @@ TOLERANCE = Decimal("0.01")
 
 class ValidationService:
     @staticmethod
+    def validate_unified_movement_payload(
+        movement_type: MovementType,
+        amount: Decimal,
+        items: list,
+        salaries: list,
+        client_payments: list,
+    ) -> None:
+        if amount is None or amount <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: amount must be > 0")
+
+        if movement_type in (MovementType.COMPRA, MovementType.VENTA):
+            if not items or salaries or client_payments:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid movement structure for type '{movement_type.value}'",
+                )
+        elif movement_type == MovementType.SUELDO:
+            if not salaries or items or client_payments:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid movement structure for type '{movement_type.value}'",
+                )
+        elif movement_type == MovementType.PAGO_CLIENTE:
+            if not client_payments or items or salaries:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid movement structure for type '{movement_type.value}'",
+                )
+        elif movement_type in (MovementType.GASTO, MovementType.ENTREGA_DINERO):
+            if items or salaries or client_payments:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid movement structure for type '{movement_type.value}'",
+                )
+
+    @staticmethod
     def validate_movement_fields(movement) -> None:
         if movement.date is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: date cannot be null")
@@ -53,17 +89,17 @@ class ValidationService:
         if detail_kind == "item" and movement_type != MovementType.COMPRA and movement_type != MovementType.VENTA:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid movement detail type: cannot insert items for movement type '{movement_type.value}'",
+                detail="Invalid type for movement_items",
             )
         if detail_kind == "salary" and movement_type != MovementType.SUELDO:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid movement detail type: cannot insert salaries for movement type '{movement_type.value}'",
+                detail="Invalid type for movement_salaries",
             )
         if detail_kind == "client_payment" and movement_type != MovementType.PAGO_CLIENTE:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid movement detail type: cannot insert client payments for movement type '{movement_type.value}'",
+                detail="Invalid type for movement_client_payments",
             )
 
     @staticmethod
