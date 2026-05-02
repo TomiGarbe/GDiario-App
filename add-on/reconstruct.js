@@ -148,10 +148,12 @@ function procesarSueldos(ss) {
     const date = row[0];
     const employee = _asCleanString(row[1]);
     const tipo = _asCleanString(row[2]);
-    const concepto = _asCleanString(row[3]);
+    const concepto = row[3];
     const amount = Number(row[4]);
 
-    if (tipo !== "Adelanto") continue;
+    if (!concepto || !concepto.toString().toLowerCase().includes("adelanto")) {
+      continue;
+    }
     if (!employee) continue;
     if (!isValidMovementRow({ date, amount })) continue;
 
