@@ -117,12 +117,12 @@ function procesarProductos(ss) {
           unitPrice = 0;
         }
 
-        if (unitPrice === null && !clienteSinMonto) {
+        if (!_isValidNumber(unitPrice) || unitPrice < 0) {
           errors.push(`Missing price for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}`);
           continue;
         }
-        if (!_isValidNumber(unitPrice) || unitPrice < 0) {
-          errors.push(`Invalid price for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}: ${unitPrice}`);
+        if (unitPrice === null && !clienteSinMonto) {
+          errors.push(`Missing price for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}`);
           continue;
         }
 
@@ -141,7 +141,7 @@ function procesarProductos(ss) {
         const dateKey = _toDateKey(fecha);
         const groupKey = `${dateKey}|${cliente}|${tipo}`;
         if (!productosMovementMap[groupKey] || !_isUuidV4(productosMovementMap[groupKey])) {
-          productosMovementMap[groupKey] = generateUUID();
+          productosMovementMap[groupKey] = Utilities.getUuid();
         }
         const movementId = productosMovementMap[groupKey];
 
@@ -222,7 +222,7 @@ function procesarSueldos(ss) {
 
     let id = _asCleanString(row[5]);
     if (!_isUuidV4(id)) {
-      id = generateUUID();
+      id = Utilities.getUuid();
       sheet.getRange(i + 1, 6).setValue(id);
     }
 
@@ -268,7 +268,7 @@ function procesarGastos(ss) {
 
     let id = _asCleanString(row[3]);
     if (!_isUuidV4(id)) {
-      id = generateUUID();
+      id = Utilities.getUuid();
       sheet.getRange(i + 1, 4).setValue(id);
     }
 
@@ -312,7 +312,7 @@ function procesarPagosClientes(ss) {
 
     let id = _asCleanString(row[9]);
     if (!_isUuidV4(id)) {
-      id = generateUUID();
+      id = Utilities.getUuid();
       sheet.getRange(i + 1, 10).setValue(id);
     }
 
@@ -762,4 +762,3 @@ function _readMovementClientPaymentsSheet() {
     subtotal: r[2]
   }));
 }
-

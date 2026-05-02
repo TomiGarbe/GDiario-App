@@ -59,7 +59,7 @@ function eliminarTriggersProceso() {
 
 function parseNumber(value) {
   if (value === null || value === undefined || value === "") return 0;
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
 
   let str = String(value).trim();
   if (!str) return 0;
@@ -72,7 +72,7 @@ function parseNumber(value) {
   const num = parseFloat(str);
   if (isNaN(num)) {
     Logger.log("Numero invalido: " + value);
-    return 0;
+    return null;
   }
 
   return num;

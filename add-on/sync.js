@@ -84,7 +84,7 @@ function buildMovements(rows) {
 
     const movementType = normalizeMovementType(row.type);
     const movementDate = formatDate(row.date);
-    const movementAmount = toNumber4(row.amount);
+    const movementAmount = parseNumber(row.amount);
     const movementDescription = cleanText(row.description) || "";
 
     if (!movementType || !movementDate || movementAmount === null) {
@@ -121,9 +121,9 @@ function attachItems(movementsById, rows) {
 
     const clientName = normalizeName(row.client);
     const productName = normalizeName(row.product);
-    const quantity = toNumber4(row.quantity);
-    const unitPrice = toNumber4(row.unit_price);
-    const subtotal = toNumber4(row.subtotal);
+    const quantity = parseNumber(row.quantity);
+    const unitPrice = parseNumber(row.unit_price);
+    const subtotal = parseNumber(row.subtotal);
 
     if (!clientName || !productName || quantity === null || unitPrice === null || subtotal === null) {
       throw new Error("ITEMS fila invalida: movement_id=" + movementId + ", row=" + (row._row_number || "?"));
@@ -150,7 +150,7 @@ function attachSalaries(movementsById, rows) {
     if (!movement) return;
 
     const employeeName = normalizeName(row.employee);
-    const subtotal = toNumber4(row.subtotal);
+    const subtotal = parseNumber(row.subtotal);
 
     if (!employeeName || subtotal === null) {
       throw new Error("SALARIES fila invalida: movement_id=" + movementId + ", row=" + (row._row_number || "?"));
@@ -174,7 +174,7 @@ function attachClientPayments(movementsById, rows) {
     if (!movement) return;
 
     const clientName = normalizeName(row.client_name || row.client);
-    const subtotal = toNumber4(row.subtotal);
+    const subtotal = parseNumber(row.subtotal);
 
     if (!clientName || subtotal === null) {
       throw new Error("CLIENT_PAYMENTS fila invalida: movement_id=" + movementId + ", row=" + (row._row_number || "?"));
@@ -200,11 +200,23 @@ function buildMainPayload(movementsById) {
         external_id: movement.external_id,
         type: movement.type,
         date: movement.date,
-        amount: movement.amount,
+        amount: round4(movement.amount),
         description: movement.description,
-        items: movement.items,
-        salaries: movement.salaries,
-        client_payments: movement.client_payments
+        items: (movement.items || []).map((item) => ({
+          client_name: item.client_name,
+          product_name: item.product_name,
+          quantity: round4(item.quantity),
+          unit_price: round4(item.unit_price),
+          subtotal: round4(item.subtotal)
+        })),
+        salaries: (movement.salaries || []).map((salary) => ({
+          employee_name: salary.employee_name,
+          subtotal: round4(salary.subtotal)
+        })),
+        client_payments: (movement.client_payments || []).map((payment) => ({
+          client_name: payment.client_name,
+          subtotal: round4(payment.subtotal)
+        }))
       };
     });
 
@@ -220,17 +232,55 @@ function buildPrices(rows) {
   const seen = {};
   const prices = [];
 
-  (rows || []).forEach((row) => {
-    const clientName = normalizeName(row.client || row.cliente);
-    const productName = normalizeName(row.product || row.producto);
-    const rawPrice = firstDefinedValue(row.price, row.precio, row.unit_price);
-    const price = toNumber4(rawPrice);
+  (rows || []).forEach((row, i) => {
+    Logger.log({
+      row: i + 1,
+      keys: Object.keys(row || {}),
+      raw: row
+    });
 
-    const dateCandidateA = formatDate(row.start_date || row.fecha_inicio || row.fecha);
-    const dateCandidateB = formatDate(row.date || row.fecha);
-    const startDate = dateCandidateA || dateCandidateB;
+    const clienteRaw = firstDefinedValue(
+      getField(row, "cliente"),
+      getField(row, "client"),
+      getField(row, "client_name")
+    );
+    const productoRaw = firstDefinedValue(
+      getField(row, "producto"),
+      getField(row, "product"),
+      getField(row, "product_name")
+    );
+    const fechaRaw = firstDefinedValue(
+      getField(row, "fecha desde"),
+      getField(row, "start_date"),
+      getField(row, "fecha_inicio"),
+      getField(row, "date"),
+      getField(row, "fecha")
+    );
+    const precioRaw = firstDefinedValue(
+      getField(row, "precio"),
+      getField(row, "price"),
+      getField(row, "unit_price")
+    );
 
-    if (!clientName || !productName || price === null || price < 0 || !startDate) {
+    const clientName = normalizeName(clienteRaw);
+    const productName = normalizeName(productoRaw);
+    const rawPrice = precioRaw;
+    const price = parseNumber(rawPrice);
+    const date = parseFecha(fechaRaw);
+    const startDate = formatDate(date);
+
+    if (!clientName || !productName) {
+      Logger.log("⚠️ PRECIOS cliente/producto inválido: row=" + (row._row_number || "?"));
+      throw new Error("PRECIOS fila invalida: row=" + (row._row_number || "?"));
+    }
+
+    if (!date) {
+      Logger.log("⚠️ PRECIOS fecha inválida: row=" + (row._row_number || "?") + ", valor=" + fechaRaw);
+      throw new Error("PRECIOS fila invalida: row=" + (row._row_number || "?"));
+    }
+
+    if (price === null || price < 0) {
+      Logger.log("⚠️ PRECIOS precio inválido: row=" + (row._row_number || "?") + ", valor=" + rawPrice);
       throw new Error("PRECIOS fila invalida: row=" + (row._row_number || "?"));
     }
 
@@ -241,7 +291,7 @@ function buildPrices(rows) {
     prices.push({
       client_name: clientName,
       product_name: productName,
-      price: price,
+      price: round4(price),
       start_date: startDate
     });
   });
@@ -333,7 +383,7 @@ function validateMainPayload(payload) {
     if (!cleanText(movement.external_id)) throw new Error("movements[" + idx + "].external_id faltante");
     if (!cleanText(movement.type)) throw new Error("movements[" + idx + "].type faltante");
     if (!formatDate(movement.date)) throw new Error("movements[" + idx + "].date inválida");
-    if (toNumber4(movement.amount) === null) throw new Error("movements[" + idx + "].amount inválido");
+    if (parseNumber(movement.amount) === null) throw new Error("movements[" + idx + "].amount inválido");
   });
 }
 
@@ -345,7 +395,7 @@ function validatePricesPayload(payload) {
   payload.prices.forEach((priceRow, idx) => {
     if (!cleanText(priceRow.client_name)) throw new Error("prices[" + idx + "].client_name faltante");
     if (!cleanText(priceRow.product_name)) throw new Error("prices[" + idx + "].product_name faltante");
-    if (toNumber4(priceRow.price) === null) throw new Error("prices[" + idx + "].price inválido");
+    if (parseNumber(priceRow.price) === null) throw new Error("prices[" + idx + "].price inválido");
     if (!formatDate(priceRow.start_date)) throw new Error("prices[" + idx + "].start_date inválida");
   });
 }
@@ -388,13 +438,6 @@ function formatDate(value) {
   return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
 }
 
-function toNumber4(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const num = parseNumber(value);
-  if (!Number.isFinite(num)) return null;
-  return Math.round(num * 10000) / 10000;
-}
-
 function firstDefinedValue() {
   for (let i = 0; i < arguments.length; i += 1) {
     const value = arguments[i];
@@ -409,15 +452,56 @@ function cleanText(value) {
   return text ? text : null;
 }
 
-function normalizeName(value) {
-  const clean = cleanText(value);
-  if (!clean) return null;
-  return clean
+function normalizeFieldName(value) {
+  return String(value || "")
     .toLowerCase()
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+    .trim()
+    .replace(/[_\s]+/g, " ");
+}
+
+function getField(row, fieldName) {
+  if (!row || !fieldName) return null;
+  const target = normalizeFieldName(fieldName);
+  const key = Object.keys(row).find((k) => normalizeFieldName(k) === target);
+  return key ? row[key] : null;
+}
+
+function normalizeName(value) {
+  if (value === null || value === undefined) return "";
+  return value.toString().trim().toLowerCase();
+}
+
+function parseFecha(value) {
+  if (!value) return null;
+  if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  const parts = text.split("/");
+  if (parts.length !== 3) {
+    const fallback = new Date(text);
+    return isNaN(fallback.getTime()) ? null : fallback;
+  }
+
+  const day = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const year = parseInt(parts[2], 10);
+
+  if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return null;
+  const date = new Date(year, month, day);
+  if (isNaN(date.getTime())) return null;
+
+  // Evita overflow de fechas inválidas (ej: 32/01/2026).
+  if (date.getFullYear() !== year || date.getMonth() !== month || date.getDate() !== day) return null;
+  return date;
+}
+
+function round4(value) {
+  if (value === null || value === undefined) return 0;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num * 10000) / 10000;
 }
 
 function normalizeMovementType(value) {
