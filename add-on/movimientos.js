@@ -6,10 +6,18 @@
 const CLIENTES_VENTA = ["NICO", "MARCOS", "REFINERIA"];
 
 // Filas que no son clientes reales en las hojas GRASA/HUESOS
-const FILAS_IGNORAR = [
-  "TOTAL KG COMPRADOS", "SOBRAS", "PRECIO PROMEDIO VENTA",
-  "Total Kg Semanal", "Total Sobras Semanal"
+const FILAS_EXCLUIDAS = [
+  "total kg comprados",
+  "sobras",
+  "precio promedio venta",
+  "total kg semanal",
+  "total sobras semanal"
 ];
+
+const FILAS_EXCLUIDAS_POR_HOJA = {
+  GRASA: FILAS_EXCLUIDAS,
+  HUESOS: ["total kg comprados", "sobras"]
+};
 
 function calcularMovimientos(ss) {
   const hojaPrecios = ss.getSheetByName("PRECIOS");
@@ -35,7 +43,10 @@ function calcularMovimientos(ss) {
     filas.forEach(fila => {
       const cliente = normalizeName(fila[0]);
       const clienteUpper = String(cliente || "").toUpperCase();
-      if (!cliente || FILAS_IGNORAR.includes(clienteUpper)) return;
+      if (!cliente || esFilaExcluidaPorHoja(cliente, cfg.nombre)) {
+        if (cliente) Logger.log("Fila ignorada: " + cliente);
+        return;
+      }
 
       const tipo = CLIENTES_VENTA.includes(clienteUpper) ? "Venta" : cfg.tipo;
 
@@ -73,8 +84,8 @@ function calcularMovimientos(ss) {
   const hojaCuentas = ss.getSheetByName('CUENTAS');
   if (hojaCuentas) {
     hojaCuentas.getDataRange().getValues().slice(1).forEach(fila => {
-      const debe  = Number(fila[7]) || 0;
-      const haber = Number(fila[8]) || 0;
+      const debe  = parseNumber(fila[7]) || 0;
+      const haber = parseNumber(fila[8]) || 0;
       if (!fila[1] || (!debe && !haber)) return;
 
       movimientos.push([
@@ -85,6 +96,21 @@ function calcularMovimientos(ss) {
   }
 
   return movimientos;
+}
+
+function normalizeExcludedName(value) {
+  return String(value === null || value === undefined ? "" : value).trim().toLowerCase();
+}
+
+function esFilaExcluida(nombre) {
+  return FILAS_EXCLUIDAS.indexOf(normalizeExcludedName(nombre)) !== -1;
+}
+
+function esFilaExcluidaPorHoja(nombre, hojaNombre) {
+  const key = normalizeExcludedName(nombre);
+  const hojaKey = String(hojaNombre || "").toUpperCase();
+  const lista = FILAS_EXCLUIDAS_POR_HOJA[hojaKey] || FILAS_EXCLUIDAS;
+  return lista.indexOf(key) !== -1;
 }
 
 // Devuelve el precio vigente para (cliente, producto, fecha), tomando el más reciente <= fecha
@@ -98,7 +124,7 @@ function obtenerPrecio(preciosData, cliente, producto, fecha) {
     const cli        = String(fila[0]).trim().toUpperCase();
     const prod       = String(fila[1]).trim();
     const fechaDesde = new Date(fila[2]);
-    const precio     = Number(fila[3]) || 0;
+    const precio     = parseNumber(fila[3]) || 0;
 
     if (cli === cliente && prod === producto && fechaDesde <= fecha) {
       if (!precioValido || fechaDesde > precioValido.fecha) {

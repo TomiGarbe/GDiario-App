@@ -56,3 +56,24 @@ function eliminarTriggersProceso() {
     .filter(t => ["procesoDetalle3Meses", "procesoImportarSaldoInicial"].includes(t.getHandlerFunction()))
     .forEach(t => ScriptApp.deleteTrigger(t));
 }
+
+function parseNumber(value) {
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  let str = String(value).trim();
+  if (!str) return 0;
+
+  str = str.replace(/\$/g, "");
+  str = str.replace(/\s+/g, "");
+  str = str.replace(/\./g, "");
+  str = str.replace(",", ".");
+
+  const num = parseFloat(str);
+  if (isNaN(num)) {
+    Logger.log("Numero invalido: " + value);
+    return 0;
+  }
+
+  return num;
+}

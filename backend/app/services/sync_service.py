@@ -23,6 +23,7 @@ from app.models.product import Product
 from app.repositories.movement_repository import MovementRepository
 from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
 from app.services.validation_service import ValidationService
+from app.utils.business_rules import ZERO, coerce_zero_if_special_client, es_cliente_sin_monto
 
 
 class SyncService:
@@ -62,9 +63,11 @@ class SyncService:
         )
 
         deduped: dict[tuple[str, str, date], object] = {}
+        product_lookup_pairs: dict[str, str] = {}
         for row in price_list:
             client_name = normalize_entity_name(row.client_name)
             product_name = normalize_entity_name(row.product_name)
+            product_lookup_pairs[str(row.product_name)] = product_name
             key = (client_name, product_name, row.start_date)
             deduped[key] = row
 
@@ -73,7 +76,13 @@ class SyncService:
         client_map = SyncService._load_entity_map(db, Client)
         product_map = SyncService._load_entity_map(db, Product)
         SyncService._logger.info("sync_prices loaded clients=%s products=%s", len(client_map), len(product_map))
-        SyncService._logger.info("sync_prices product keys sample=%s", list(product_map.keys())[:20])
+        for raw_product_name, normalized_product_name in product_lookup_pairs.items():
+            SyncService._logger.info(
+                "Looking for product: '%s' -> '%s'",
+                raw_product_name,
+                normalized_product_name,
+            )
+        SyncService._logger.info("Available products: %s", list(product_map.keys()))
 
         missing_clients = sorted(name for name in client_names if name not in client_map)
         missing_products = sorted(name for name in product_names if name not in product_map)
@@ -84,12 +93,24 @@ class SyncService:
 
         rows = []
         for (client_name, product_name, start_date), item in deduped.items():
+            if item.price is None or item.price < 0:
+                raise ValueError("Invalid price")
+            coerced_price, was_overridden = coerce_zero_if_special_client(client_name, item.price)
+            if es_cliente_sin_monto(client_name):
+                SyncService._logger.info("Cliente sin monto detectado: %s", client_name)
+                if was_overridden:
+                    SyncService._logger.warning(
+                        "Precio > 0 recibido para cliente sin monto. client=%s product=%s incoming=%s -> 0",
+                        client_name,
+                        product_name,
+                        item.price,
+                    )
             rows.append(
                 {
                     "client_id": client_map[client_name],
                     "product_id": product_map[product_name],
                     "start_date": start_date,
-                    "price": item.price,
+                    "price": coerced_price,
                 }
             )
 
@@ -156,15 +177,11 @@ class SyncService:
         product_map = resolve_or_create_entities(db, Product, [item.product_name for item in item_list])
 
         rows = [
-            {
-                "id": item.id,
-                "movement_id": item.movement_id,
-                "client_id": client_map[normalize_entity_name(item.client_name)],
-                "product_id": product_map[normalize_entity_name(item.product_name)],
-                "quantity": item.quantity,
-                "unit_price": item.unit_price,
-                "subtotal": item.subtotal,
-            }
+            SyncService._build_sync_movement_item_row(
+                item=item,
+                client_id=client_map[normalize_entity_name(item.client_name)],
+                product_id=product_map[normalize_entity_name(item.product_name)],
+            )
             for item in item_list
         ]
 
@@ -229,12 +246,10 @@ class SyncService:
         client_map = resolve_or_create_entities(db, Client, [item.client_name for item in client_payment_list])
 
         rows = [
-            {
-                "id": item.id,
-                "movement_id": item.movement_id,
-                "client_id": client_map[normalize_entity_name(item.client_name)],
-                "subtotal": item.subtotal,
-            }
+            SyncService._build_sync_movement_client_payment_row(
+                item=item,
+                client_id=client_map[normalize_entity_name(item.client_name)],
+            )
             for item in client_payment_list
         ]
 
@@ -295,7 +310,7 @@ class SyncService:
                 "period_id": period_id,
                 "date": movement.date,
                 "type": movement_type_map[movement.external_id],
-                "amount": movement.amount,
+                "amount": SyncService._coerce_sync_full_movement_amount(movement),
                 "description": movement.description,
             }
             for movement in movement_list
@@ -382,14 +397,12 @@ class SyncService:
         for movement in movement_list:
             for item in movement.items:
                 item_rows.append(
-                    {
-                        "movement_id": movement.external_id,
-                        "client_id": client_map[normalize_entity_name(item.client_name)],
-                        "product_id": product_map[normalize_entity_name(item.product_name)],
-                        "quantity": item.quantity,
-                        "unit_price": item.unit_price,
-                        "subtotal": item.subtotal,
-                    }
+                    SyncService._build_sync_full_movement_item_row(
+                        movement=movement,
+                        item=item,
+                        client_id=client_map[normalize_entity_name(item.client_name)],
+                        product_id=product_map[normalize_entity_name(item.product_name)],
+                    )
                 )
             for salary in movement.salaries:
                 salary_rows.append(
@@ -401,11 +414,11 @@ class SyncService:
                 )
             for client_payment in movement.client_payments:
                 client_payment_rows.append(
-                    {
-                        "movement_id": movement.external_id,
-                        "client_id": client_map[normalize_entity_name(client_payment.client_name)],
-                        "subtotal": client_payment.subtotal,
-                    }
+                    SyncService._build_sync_full_movement_client_payment_row(
+                        movement=movement,
+                        client_payment=client_payment,
+                        client_id=client_map[normalize_entity_name(client_payment.client_name)],
+                    )
                 )
 
         if item_rows:
@@ -503,6 +516,124 @@ class SyncService:
             return {}
         rows = db.execute(select(Movement.id, Movement.type).where(Movement.id.in_(movement_ids))).all()
         return {movement_id: movement_type for movement_id, movement_type in rows}
+
+    @staticmethod
+    def _coerce_sync_full_movement_amount(movement) -> Decimal:
+        if movement.items:
+            normalized_clients = [normalize_entity_name(item.client_name) for item in movement.items]
+            if all(es_cliente_sin_monto(name) for name in normalized_clients):
+                if movement.amount != ZERO:
+                    SyncService._logger.warning(
+                        "Amount > 0 recibido para movimiento con clientes sin monto. movement_id=%s incoming=%s -> 0",
+                        movement.external_id,
+                        movement.amount,
+                    )
+                for client_name in normalized_clients:
+                    SyncService._logger.info("Cliente sin monto detectado: %s", client_name)
+                return ZERO
+            return movement.amount
+        if movement.client_payments:
+            normalized_clients = [normalize_entity_name(item.client_name) for item in movement.client_payments]
+            if all(es_cliente_sin_monto(name) for name in normalized_clients):
+                if movement.amount != ZERO:
+                    SyncService._logger.warning(
+                        "Amount > 0 recibido para pago cliente sin monto. movement_id=%s incoming=%s -> 0",
+                        movement.external_id,
+                        movement.amount,
+                    )
+                for client_name in normalized_clients:
+                    SyncService._logger.info("Cliente sin monto detectado: %s", client_name)
+                return ZERO
+            return movement.amount
+        return movement.amount
+
+    @staticmethod
+    def _build_sync_movement_item_row(item, client_id: UUID, product_id: UUID) -> dict:
+        normalized_client_name = normalize_entity_name(item.client_name)
+        unit_price, unit_price_overridden = coerce_zero_if_special_client(normalized_client_name, item.unit_price)
+        subtotal, subtotal_overridden = coerce_zero_if_special_client(normalized_client_name, item.subtotal)
+        if es_cliente_sin_monto(normalized_client_name):
+            SyncService._logger.info("Cliente sin monto detectado: %s", normalized_client_name)
+            if unit_price_overridden or subtotal_overridden:
+                SyncService._logger.warning(
+                    "Item con monto > 0 para cliente sin monto. movement_id=%s client=%s unit_price=%s subtotal=%s -> 0",
+                    item.movement_id,
+                    normalized_client_name,
+                    item.unit_price,
+                    item.subtotal,
+                )
+        return {
+            "id": item.id,
+            "movement_id": item.movement_id,
+            "client_id": client_id,
+            "product_id": product_id,
+            "quantity": item.quantity,
+            "unit_price": unit_price,
+            "subtotal": subtotal,
+        }
+
+    @staticmethod
+    def _build_sync_movement_client_payment_row(item, client_id: UUID) -> dict:
+        normalized_client_name = normalize_entity_name(item.client_name)
+        subtotal, subtotal_overridden = coerce_zero_if_special_client(normalized_client_name, item.subtotal)
+        if es_cliente_sin_monto(normalized_client_name):
+            SyncService._logger.info("Cliente sin monto detectado: %s", normalized_client_name)
+            if subtotal_overridden:
+                SyncService._logger.warning(
+                    "Client payment con subtotal > 0 para cliente sin monto. movement_id=%s client=%s subtotal=%s -> 0",
+                    item.movement_id,
+                    normalized_client_name,
+                    item.subtotal,
+                )
+        return {
+            "id": item.id,
+            "movement_id": item.movement_id,
+            "client_id": client_id,
+            "subtotal": subtotal,
+        }
+
+    @staticmethod
+    def _build_sync_full_movement_item_row(movement, item, client_id: UUID, product_id: UUID) -> dict:
+        normalized_client_name = normalize_entity_name(item.client_name)
+        unit_price, unit_price_overridden = coerce_zero_if_special_client(normalized_client_name, item.unit_price)
+        subtotal, subtotal_overridden = coerce_zero_if_special_client(normalized_client_name, item.subtotal)
+        if es_cliente_sin_monto(normalized_client_name):
+            SyncService._logger.info("Cliente sin monto detectado: %s", normalized_client_name)
+            if unit_price_overridden or subtotal_overridden:
+                SyncService._logger.warning(
+                    "Sync full item con monto > 0 para cliente sin monto. movement_id=%s client=%s unit_price=%s subtotal=%s -> 0",
+                    movement.external_id,
+                    normalized_client_name,
+                    item.unit_price,
+                    item.subtotal,
+                )
+        return {
+            "movement_id": movement.external_id,
+            "client_id": client_id,
+            "product_id": product_id,
+            "quantity": item.quantity,
+            "unit_price": unit_price,
+            "subtotal": subtotal,
+        }
+
+    @staticmethod
+    def _build_sync_full_movement_client_payment_row(movement, client_payment, client_id: UUID) -> dict:
+        normalized_client_name = normalize_entity_name(client_payment.client_name)
+        subtotal, subtotal_overridden = coerce_zero_if_special_client(normalized_client_name, client_payment.subtotal)
+        if es_cliente_sin_monto(normalized_client_name):
+            SyncService._logger.info("Cliente sin monto detectado: %s", normalized_client_name)
+            if subtotal_overridden:
+                SyncService._logger.warning(
+                    "Sync full client payment con subtotal > 0 para cliente sin monto. movement_id=%s client=%s subtotal=%s -> 0",
+                    movement.external_id,
+                    normalized_client_name,
+                    client_payment.subtotal,
+                )
+        return {
+            "movement_id": movement.external_id,
+            "client_id": client_id,
+            "subtotal": subtotal,
+        }
 
     @staticmethod
     def export_full(db: Session, period_id: int) -> dict:

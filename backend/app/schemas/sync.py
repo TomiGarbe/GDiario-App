@@ -106,6 +106,13 @@ class SyncPricePayload(BaseModel):
             raise ValueError("value cannot be empty")
         return clean
 
+    @field_validator("price")
+    @classmethod
+    def validate_price(cls, value: Decimal) -> Decimal:
+        if value is None or value < 0:
+            raise ValueError("Invalid price")
+        return value
+
 
 class SyncImportResponse(BaseModel):
     period_id: int

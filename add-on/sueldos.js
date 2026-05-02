@@ -20,7 +20,7 @@ function generarResumenSueldos(ss) {
     empleado: String(r[1]).toUpperCase(),
     tipo:     String(r[2]).toLowerCase(),
     concepto: r[3],
-    monto:    Number(r[4]) || 0
+    monto:    parseNumber(r[4]) || 0
   }));
 
   // Agrupar por empleado

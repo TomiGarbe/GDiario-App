@@ -2,6 +2,8 @@ const API_BASE_URL = String(
   window.API_URL || window.NEXT_PUBLIC_API_URL || "https://gdiario-app.onrender.com/api"
 ).trim().replace(/\/$/, "");
 
+var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function getTodayIso() {
   if (typeof hoyArgentinaISO === 'function') return hoyArgentinaISO();
 
@@ -17,33 +19,76 @@ function toNum(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function detailToLegacy(d) {
-  return {
-    producto: d && d.product ? String(d.product).trim() : '',
-    kg: d && d.quantity != null ? toNum(d.quantity) : 0,
-    precio: d && d.unit_price != null ? toNum(d.unit_price) : 0,
-    subtotal: d && d.subtotal != null ? toNum(d.subtotal) : 0,
-    empleado: d && d.employee ? String(d.employee).trim() : ''
-  };
+function isValidUUID(value) {
+  return UUID_RE.test(String(value || '').trim());
 }
 
-function mapMovementTypeToLegacy(mov) {
-  var type = String(mov && mov.type || '').toLowerCase();
-  var details = Array.isArray(mov && mov.details) ? mov.details : [];
+function toIsoDate(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
 
-  if (type === 'compra') return 'Compra';
-  if (type === 'venta') return 'Descarga';
-  if (type === 'pago') {
-    var desc = String(mov && mov.description || '').toLowerCase();
-    if (desc.indexOf('entrega') !== -1) return 'Entrega de dinero';
-    return 'Pago a cliente';
-  }
-  if (type === 'sueldo') return 'Gasto';
-  if (type === 'gasto') {
-    var hasEmployee = details.some(function(d) { return !!(d && d.employee); });
-    return hasEmployee ? 'Gasto' : 'Gasto';
-  }
-  return 'Movimiento';
+  var d = new Date(raw);
+  if (isNaN(d.getTime())) return '';
+
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1).padStart(2, '0');
+  var day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+
+function getPeriodIdFromDate(fecha) {
+  var iso = toIsoDate(fecha) || getTodayIso();
+  var y = Number(iso.slice(0, 4));
+  var m = Number(iso.slice(5, 7));
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return 0;
+  return y * 100 + m;
+}
+
+function sanitizeQueryParams(params) {
+  var src = params && typeof params === 'object' ? params : {};
+  var out = Object.create(null);
+
+  Object.keys(src).forEach(function(k) {
+    var v = src[k];
+    if (v == null) return;
+
+    if (typeof v === 'string') {
+      var t = v.trim();
+      if (!t || t.toLowerCase() === 'null' || t.toLowerCase() === 'undefined') return;
+      out[k] = t;
+      return;
+    }
+
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) return;
+      out[k] = String(v);
+      return;
+    }
+
+    if (typeof v === 'boolean') {
+      out[k] = v ? 'true' : 'false';
+    }
+  });
+
+  ['id', 'movement_id', 'client_id', 'product_id', 'price_id'].forEach(function(idKey) {
+    if (Object.prototype.hasOwnProperty.call(out, idKey) && !isValidUUID(out[idKey])) {
+      delete out[idKey];
+    }
+  });
+
+  return out;
+}
+
+function buildQueryString(params) {
+  var clean = sanitizeQueryParams(params);
+  var pairs = [];
+
+  Object.keys(clean).forEach(function(k) {
+    pairs.push(encodeURIComponent(k) + '=' + encodeURIComponent(clean[k]));
+  });
+
+  return pairs.length ? ('?' + pairs.join('&')) : '';
 }
 
 function mapBackendMovementToLegacy(mov) {
@@ -150,13 +195,14 @@ function buildCompraDetails(item) {
     .map(function(p) {
       var product = String(p && p.producto || '').trim();
       var qty = Math.max(0, toNum(p && p.kg));
-      if (!product || !(qty > 0)) return null;
+      var explicit = Math.max(0, toNum(p && p.precio));
+      var unit = explicit > 0 ? explicit : pricePerKg;
+      if (!product || !(qty > 0) || !(unit > 0)) return null;
 
       return {
-        type: 'producto',
         product: product,
         quantity: qty,
-        unit_price: pricePerKg > 0 ? pricePerKg : 0
+        unit_price: unit
       };
     })
     .filter(Boolean);
@@ -164,44 +210,88 @@ function buildCompraDetails(item) {
 
 function buildLegacyMovementCreate(item, fecha) {
   var tipo = String(item && item.tipo || '').trim().toLowerCase();
+  var fechaIso = toIsoDate(fecha) || getTodayIso();
+  var periodId = getPeriodIdFromDate(fechaIso);
 
   if (tipo === 'compra') {
+    var clientCompra = item && item.cliente ? String(item.cliente).trim() : '';
+    var compraItems = buildCompraDetails(item).map(function(d) {
+      var qty = Math.max(0, toNum(d && d.quantity));
+      var price = Math.max(0, toNum(d && d.unit_price));
+      return {
+        client: clientCompra,
+        product: d && d.product ? String(d.product).trim() : '',
+        quantity: qty,
+        unit_price: price,
+        subtotal: qty * price
+      };
+    }).filter(function(it) {
+      return !!it.client && !!it.product && it.quantity > 0 && it.unit_price > 0 && it.subtotal > 0;
+    });
+
+    var amountCompra = compraItems.reduce(function(acc, it) { return acc + toNum(it.subtotal); }, 0);
+    if (!compraItems.length || !(amountCompra > 0)) {
+      throw new Error('Compra invalida: faltan cliente/producto o precios mayores a 0');
+    }
+
     return {
-      date: fecha,
+      period_id: periodId,
+      date: fechaIso,
       type: 'compra',
-      client: item && item.cliente ? String(item.cliente).trim() : null,
-      employee: null,
+      amount: amountCompra,
       description: 'Compra',
-      details: buildCompraDetails(item)
+      items: compraItems
     };
   }
 
   if (tipo === 'descarga') {
     var kgDesc = Math.max(0, toNum(item && item.kg));
+    var montoDesc = Math.max(0, toNum(item && item.montoTotal != null ? item.montoTotal : item && item.monto));
+    var precioDesc = Math.max(0, toNum(item && item.precio));
+    if (!(precioDesc > 0) && kgDesc > 0 && montoDesc > 0) {
+      precioDesc = montoDesc / kgDesc;
+    }
+    var subtotalDesc = kgDesc * precioDesc;
+    if (!(kgDesc > 0) || !(precioDesc > 0) || !(subtotalDesc > 0)) {
+      throw new Error('Descarga invalida: se requiere kg y precio mayor a 0');
+    }
+
+    var clientVenta = item && item.cliente ? String(item.cliente).trim() : '';
+    var productVenta = item && item.producto ? String(item.producto).trim() : 'Producto';
+    if (!clientVenta || !productVenta) {
+      throw new Error('Descarga invalida: faltan cliente o producto');
+    }
+
     return {
-      date: fecha,
+      period_id: periodId,
+      date: fechaIso,
       type: 'venta',
-      client: item && item.cliente ? String(item.cliente).trim() : null,
-      employee: null,
+      amount: subtotalDesc,
       description: 'Descarga',
-      details: [{
-        type: 'producto',
-        product: item && item.producto ? String(item.producto).trim() : 'Producto',
+      items: [{
+        client: clientVenta,
+        product: productVenta,
         quantity: kgDesc,
-        unit_price: 0
+        unit_price: precioDesc,
+        subtotal: subtotalDesc
       }]
     };
   }
 
   if (tipo === 'pago a cliente') {
     var montoPago = Math.max(0, toNum(item && item.monto));
+    var clientePago = item && item.cliente ? String(item.cliente).trim() : '';
+    if (!(montoPago > 0) || !clientePago) {
+      throw new Error('Pago a cliente invalido: se requiere cliente y monto mayor a 0');
+    }
+
     return {
-      date: fecha,
-      type: 'pago',
-      client: item && item.cliente ? String(item.cliente).trim() : null,
-      employee: null,
+      period_id: periodId,
+      date: fechaIso,
+      type: 'pago_cliente',
+      amount: montoPago,
       description: 'Pago a cliente',
-      details: [{ type: 'gasto', quantity: 1, unit_price: montoPago }]
+      client_payments: [{ client: clientePago, subtotal: montoPago }]
     };
   }
 
@@ -210,57 +300,71 @@ function buildLegacyMovementCreate(item, fecha) {
 
 function buildLegacySingleMovementUpdate(payload) {
   var fecha = String(payload && payload.fecha || '').trim();
+  var fechaIso = toIsoDate(fecha) || getTodayIso();
+  var periodId = getPeriodIdFromDate(fechaIso);
 
   if (Array.isArray(payload && payload.productos) && payload.productos.length === 1) {
-    return buildLegacyMovementCreate(payload.productos[0], fecha);
+    return buildLegacyMovementCreate(payload.productos[0], fechaIso);
   }
 
   var tipo = String(payload && payload.tipo || '').trim().toLowerCase();
 
   if (tipo === 'entrega de dinero' || tipo === 'entrega') {
     var montoEntrega = Math.max(0, toNum(payload && payload.monto));
+    if (!(montoEntrega > 0)) throw new Error('La entrega debe tener un monto mayor a 0');
+
     return {
-      date: fecha,
-      type: 'pago',
-      client: payload && payload.cliente ? String(payload.cliente).trim() : null,
-      employee: null,
+      period_id: periodId,
+      date: fechaIso,
+      type: 'entrega_dinero',
+      amount: montoEntrega,
       description: payload && payload.detalle ? String(payload.detalle).trim() : 'Entrega de dinero',
-      details: [{ type: 'gasto', quantity: 1, unit_price: montoEntrega }]
+      items: [],
+      salaries: [],
+      client_payments: []
     };
   }
 
   if (tipo === 'gasto') {
     var empleados = Array.isArray(payload && payload.empleados) ? payload.empleados : [];
-    var details = [];
 
     if (empleados.length) {
-      details = empleados.map(function(emp) {
+      var salaries = empleados.map(function(emp) {
         return {
-          type: 'empleado',
           employee: String(emp && emp.nombre || '').trim(),
-          quantity: 1,
-          unit_price: Math.max(0, toNum(emp && emp.monto))
+          subtotal: Math.max(0, toNum(emp && emp.monto))
         };
-      }).filter(function(d) { return !!d.employee && d.unit_price > 0; });
-    } else {
-      details = [{
-        type: 'gasto',
-        quantity: 1,
-        unit_price: Math.max(0, toNum(payload && payload.monto))
-      }];
+      }).filter(function(d) { return !!d.employee && d.subtotal > 0; });
+
+      var amountSueldo = salaries.reduce(function(acc, s) { return acc + toNum(s.subtotal); }, 0);
+      if (!salaries.length || !(amountSueldo > 0)) throw new Error('Gasto de ayudantes invalido');
+
+      return {
+        period_id: periodId,
+        date: fechaIso,
+        type: 'sueldo',
+        amount: amountSueldo,
+        description: payload && payload.detalle ? String(payload.detalle).trim() : 'Gasto',
+        salaries: salaries
+      };
     }
 
+    var amountGasto = Math.max(0, toNum(payload && payload.monto));
+    if (!(amountGasto > 0)) throw new Error('El gasto debe tener un monto mayor a 0');
+
     return {
-      date: fecha,
-      type: empleados.length ? 'sueldo' : 'gasto',
-      client: null,
-      employee: null,
+      period_id: periodId,
+      date: fechaIso,
+      type: 'gasto',
+      amount: amountGasto,
       description: payload && payload.detalle ? String(payload.detalle).trim() : 'Gasto',
-      details: details
+      items: [],
+      salaries: [],
+      client_payments: []
     };
   }
 
-  throw new Error('Payload de edición no soportado');
+  throw new Error('Payload de edicion no soportado');
 }
 
 function extractErrorMessage(response, payload) {
@@ -275,14 +379,18 @@ function extractErrorMessage(response, payload) {
 function request(path, opts) {
   var options = opts || {};
   var url = API_BASE_URL + (path.startsWith('/') ? path : ('/' + path));
+  var method = options.method || 'GET';
+  var bodyPayload = options.body !== undefined ? options.body : undefined;
+
+  console.log('Request:', method, url, bodyPayload);
 
   return fetch(url, {
-    method: options.method || 'GET',
+    method: method,
     headers: Object.assign({
       'Accept': 'application/json',
       'Content-Type': 'application/json'
     }, options.headers || {}),
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined
+    body: bodyPayload !== undefined ? JSON.stringify(bodyPayload) : undefined
   }).then(function(response) {
     if (response.status === 204) return null;
 
@@ -294,6 +402,7 @@ function request(path, opts) {
         throw new Error(extractErrorMessage(response, payload));
       }
 
+      console.log('Response:', payload);
       return payload;
     });
   }).catch(function(err) {
@@ -306,11 +415,29 @@ function request(path, opts) {
 }
 
 function getInitialData() {
-  return request('/movements/entities').then(function(entities) {
-    var payload = entities || {};
+  return Promise.all([
+    request('/clients'),
+    request('/movements?limit=1000')
+  ]).then(function(results) {
+    var clientsPayload = Array.isArray(results[0]) ? results[0] : [];
+    var movementsPayload = Array.isArray(results[1]) ? results[1] : [];
+
+    var clients = clientsPayload
+      .map(function(c) { return String(c && c.name || '').trim(); })
+      .filter(Boolean);
+
+    var productsMap = Object.create(null);
+    movementsPayload.forEach(function(mov) {
+      var items = Array.isArray(mov && mov.items) ? mov.items : [];
+      items.forEach(function(it) {
+        var p = String(it && it.product || '').trim();
+        if (p) productsMap[p] = true;
+      });
+    });
+
     return {
-      clientes: Array.isArray(payload.clients) ? payload.clients : [],
-      productos: Array.isArray(payload.products) ? payload.products : [],
+      clientes: clients,
+      productos: Object.keys(productsMap),
       precios: {},
       clientesEspeciales: []
     };
@@ -345,15 +472,40 @@ function fetchConAuth(data) {
 
   if (action === 'obtenerSaldo') {
     var fecha = String(payload.fecha || payload.date || getTodayIso()).trim();
-    return request('/movements/balance?date_from=' + encodeURIComponent(fecha) + '&date_to=' + encodeURIComponent(fecha))
-      .then(function(r) {
-        return { saldo: toNum(r && r.balance) };
-      });
+    var fechaIso = toIsoDate(fecha) || getTodayIso();
+    var qsSaldo = buildQueryString({
+      date_from: fechaIso,
+      date_to: fechaIso,
+      period_id: getPeriodIdFromDate(fechaIso),
+      client_id: payload.client_id,
+      product_id: payload.product_id
+    });
+
+    return request('/movements' + qsSaldo).then(function(rows) {
+      var list = Array.isArray(rows) ? rows : [];
+      var saldo = list.reduce(function(acc, mov) {
+        var type = String(mov && mov.type || '').toLowerCase();
+        var amount = toNum(mov && mov.amount);
+        if (type === 'venta') return acc + amount;
+        return acc - amount;
+      }, 0);
+
+      return { saldo: saldo };
+    });
   }
 
   if (action === 'obtenerMovimientos' || action === 'obtenerMovimientosDia') {
     var fechaMov = String(payload.fecha || '').trim();
-    return request('/movements').then(function(lista) {
+    var qsMov = buildQueryString({
+      date_from: fechaMov || undefined,
+      date_to: fechaMov || undefined,
+      period_id: getPeriodIdFromDate(fechaMov || getTodayIso()),
+      limit: 1000,
+      client_id: payload.client_id,
+      product_id: payload.product_id
+    });
+
+    return request('/movements' + qsMov).then(function(lista) {
       var arr = Array.isArray(lista) ? lista : [];
       if (fechaMov) {
         arr = arr.filter(function(m) {
@@ -419,7 +571,13 @@ function fetchConAuth(data) {
     var delChain = Promise.resolve();
     ids.forEach(function(id) {
       delChain = delChain.then(function() {
-        return request('/movements/' + encodeURIComponent(String(id).trim()), {
+        var movementId = String(id || '').trim();
+        if (!isValidUUID(movementId)) {
+          console.warn('eliminarMovimiento: ID invalido omitido', movementId);
+          return null;
+        }
+
+        return request('/movements/' + encodeURIComponent(movementId), {
           method: 'DELETE'
         });
       });
@@ -430,7 +588,7 @@ function fetchConAuth(data) {
 
   if (action === 'editarMovimiento') {
     var id = String(payload.id || '').trim();
-    if (!id) return Promise.reject(new Error('ID requerido'));
+    if (!isValidUUID(id)) return Promise.reject(new Error('ID invalido'));
 
     var updateBody = buildLegacySingleMovementUpdate(payload.data || {});
 
@@ -452,4 +610,4 @@ window.apiLoginWithGoogle = apiLoginWithGoogle;
 window.fetchConAuth = fetchConAuth;
 window.api = api;
 window.API_BASE_URL = API_BASE_URL;
-
+window.isValidUUID = isValidUUID;

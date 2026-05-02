@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Date, ForeignKey, Index, Numeric, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Date, ForeignKey, Index, Numeric, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,6 +25,7 @@ class Price(Base):
             "start_date",
             name="uq_prices_client_product_start_date",
         ),
+        CheckConstraint("price >= 0", name="ck_price_non_negative"),
         Index("ix_prices_client_product_start_date", "client_id", "product_id", "start_date"),
     )
 

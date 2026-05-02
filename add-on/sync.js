@@ -88,8 +88,7 @@ function buildMovements(rows) {
     const movementDescription = cleanText(row.description) || "";
 
     if (!movementType || !movementDate || movementAmount === null) {
-      Logger.log("MOVEMENTS fila ignorada por datos inválidos: id=" + externalId);
-      return;
+      throw new Error("MOVEMENTS fila invalida: id=" + externalId + ", row=" + (row._row_number || "?"));
     }
 
     if (!movementsById[externalId]) {
@@ -127,8 +126,7 @@ function attachItems(movementsById, rows) {
     const subtotal = toNumber4(row.subtotal);
 
     if (!clientName || !productName || quantity === null || unitPrice === null || subtotal === null) {
-      Logger.log("ITEMS fila ignorada por datos inválidos: movement_id=" + movementId);
-      return;
+      throw new Error("ITEMS fila invalida: movement_id=" + movementId + ", row=" + (row._row_number || "?"));
     }
 
     const dedupeKey = [clientName, productName, quantity, unitPrice, subtotal].join("|");
@@ -155,8 +153,7 @@ function attachSalaries(movementsById, rows) {
     const subtotal = toNumber4(row.subtotal);
 
     if (!employeeName || subtotal === null) {
-      Logger.log("SALARIES fila ignorada por datos inválidos: movement_id=" + movementId);
-      return;
+      throw new Error("SALARIES fila invalida: movement_id=" + movementId + ", row=" + (row._row_number || "?"));
     }
 
     const dedupeKey = [employeeName, subtotal].join("|");
@@ -180,8 +177,7 @@ function attachClientPayments(movementsById, rows) {
     const subtotal = toNumber4(row.subtotal);
 
     if (!clientName || subtotal === null) {
-      Logger.log("CLIENT_PAYMENTS fila ignorada por datos inválidos: movement_id=" + movementId);
-      return;
+      throw new Error("CLIENT_PAYMENTS fila invalida: movement_id=" + movementId + ", row=" + (row._row_number || "?"));
     }
 
     const dedupeKey = [clientName, subtotal].join("|");
@@ -227,14 +223,15 @@ function buildPrices(rows) {
   (rows || []).forEach((row) => {
     const clientName = normalizeName(row.client || row.cliente);
     const productName = normalizeName(row.product || row.producto);
-    const price = toNumber4(row.price || row.precio || row.unit_price);
+    const rawPrice = firstDefinedValue(row.price, row.precio, row.unit_price);
+    const price = toNumber4(rawPrice);
 
     const dateCandidateA = formatDate(row.start_date || row.fecha_inicio || row.fecha);
     const dateCandidateB = formatDate(row.date || row.fecha);
     const startDate = dateCandidateA || dateCandidateB;
 
-    if (!clientName || !productName || price === null || !startDate) {
-      return;
+    if (!clientName || !productName || price === null || price < 0 || !startDate) {
+      throw new Error("PRECIOS fila invalida: row=" + (row._row_number || "?"));
     }
 
     const key = [clientName, productName, price, startDate].join("|");
@@ -393,9 +390,17 @@ function formatDate(value) {
 
 function toNumber4(value) {
   if (value === null || value === undefined || value === "") return null;
-  const num = Number(String(value).replace(",", "."));
+  const num = parseNumber(value);
   if (!Number.isFinite(num)) return null;
   return Math.round(num * 10000) / 10000;
+}
+
+function firstDefinedValue() {
+  for (let i = 0; i < arguments.length; i += 1) {
+    const value = arguments[i];
+    if (value !== null && value !== undefined && value !== "") return value;
+  }
+  return null;
 }
 
 function cleanText(value) {

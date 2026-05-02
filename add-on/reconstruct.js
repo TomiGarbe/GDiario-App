@@ -4,6 +4,24 @@
 
 // ========================= RECONSTRUIR =========================
 
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CLIENTES_SIN_MONTO_RECONSTRUCT = {
+  "buenos dias": true,
+  "cordiez": true,
+  "mariano": true,
+  "scurti": true,
+  "oviedo": true,
+  "almacor 35": true,
+  "amanecer": true,
+  "marcos": true,
+  "nico": true,
+  "refineria": true
+};
+
+function isValidUUID(value) {
+  return UUID_V4_REGEX.test(value); 
+}
+
 function reconstruirMovimientos() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -44,7 +62,7 @@ function reconstruirMovimientos() {
 function procesarProductos(ss) {
   const hojaPrecios = ss.getSheetByName("PRECIOS");
   const preciosData = hojaPrecios ? hojaPrecios.getDataRange().getValues().slice(1) : [];
-  const priceRows = _buildNormalizedPriceRows(preciosData);
+  const pricesMap = _buildPricesMap(preciosData);
 
   const COL_INICIO = 2;
   const grupos = {};
@@ -68,7 +86,10 @@ function procesarProductos(ss) {
     filas.forEach(fila => {
       const cliente = normalizeName(fila[0]);
       const clienteUpper = String(cliente || "").toUpperCase();
-      if (!cliente || FILAS_IGNORAR.includes(clienteUpper)) return;
+      if (!cliente || esFilaExcluidaPorHoja(cliente, cfg.nombre)) {
+        if (cliente) Logger.log("Fila ignorada: " + cliente);
+        return;
+      }
 
       const tipo = CLIENTES_VENTA.includes(clienteUpper) ? "Venta" : "Compra";
 
@@ -84,22 +105,35 @@ function procesarProductos(ss) {
         const cantidad = _toNumber(fila[col]);
         if (!_isValidDate(fecha) || !_isValidNumber(cantidad) || cantidad === 0) continue;
 
-        const unitPrice = resolveUnitPrice({
-          prices: priceRows,
+        const clienteSinMonto = _esClienteSinMontoReconstruct(cliente);
+        let unitPrice = getPrice({
+          pricesMap,
           client_name: cliente,
           product_name: producto,
           date: fecha
         });
-        if (!_isValidNumber(unitPrice) || unitPrice <= 0) {
+
+        if (clienteSinMonto) {
+          unitPrice = 0;
+        }
+
+        if (unitPrice === null && !clienteSinMonto) {
           errors.push(`Missing price for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}`);
           continue;
         }
+        if (!_isValidNumber(unitPrice) || unitPrice < 0) {
+          errors.push(`Invalid price for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}: ${unitPrice}`);
+          continue;
+        }
+
+        Logger.log(`Precio usado: ${cliente} - ${producto} - ${unitPrice}`);
 
         const subtotal = unitPrice * cantidad;
-        if (!_isValidNumber(subtotal) || subtotal <= 0) continue;
+        if (!_isValidNumber(subtotal)) continue;
+        if (!clienteSinMonto && subtotal <= 0) continue;
         const roundedSubtotal = Math.round(subtotal * 100) / 100;
         const expectedSubtotal = Math.round((cantidad * unitPrice) * 100) / 100;
-        if (roundedSubtotal !== expectedSubtotal) {
+        if (!clienteSinMonto && roundedSubtotal !== expectedSubtotal) {
           errors.push(`Subtotal mismatch for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}: subtotal=${roundedSubtotal} expected=${expectedSubtotal}`);
           continue;
         }
@@ -178,7 +212,7 @@ function procesarSueldos(ss) {
     const employee = normalizeName(row[1]);
     const tipo = _asCleanString(row[2]);
     const concepto = row[3];
-    const amount = Number(row[4]);
+    const amount = parseNumber(row[4]);
 
     if (!concepto || !concepto.toString().toLowerCase().includes("adelanto")) {
       continue;
@@ -228,7 +262,7 @@ function procesarGastos(ss) {
 
     const date = row[0];
     const tipo = _asCleanString(row[1]);
-    const amount = Number(row[2]);
+    const amount = parseNumber(row[2]);
 
     if (!isValidMovementRow({ date, amount })) continue;
 
@@ -270,7 +304,7 @@ function procesarPagosClientes(ss) {
     const date = row[0];
     const client = normalizeName(row[1]);
     const concepto = _asCleanString(row[2]);
-    const haber = Number(row[8]);
+    const haber = parseNumber(row[8]);
 
     if (concepto !== "Pago de Fabian") continue;
     if (!client) continue;
@@ -404,7 +438,7 @@ function isSummaryRow(row) {
 function isValidMovementRow({ date, amount }) {
   if (!date) return false;
   if (amount === null || amount === undefined || amount === "") return false;
-  const n = Number(amount);
+  const n = parseNumber(amount);
   if (!Number.isFinite(n)) return false;
   if (n <= 0) return false;
   return true;
@@ -428,7 +462,7 @@ function _toDateKey(value) {
 }
 
 function _toNumber(value) {
-  const n = Number(value);
+  const n = parseNumber(value);
   return Number.isFinite(n) ? n : NaN;
 }
 
@@ -441,55 +475,61 @@ function _asCleanString(value) {
   return String(value).trim();
 }
 
-function _buildNormalizedPriceRows(preciosData) {
-  const out = [];
+function _buildPricesMap(preciosData) {
+  const out = {};
   (preciosData || []).forEach((fila) => {
+    // PRECIOS: Cliente | Producto | Fecha Desde | Precio
     const clientName = normalizeName(fila[0]);
     const productName = normalizeName(fila[1]);
-    const priceA = _toNumber(fila[2]);
-    const dateA = new Date(fila[3]);
-    const priceB = _toNumber(fila[3]);
-    const dateB = new Date(fila[2]);
+    const startDate = fila[2] instanceof Date ? fila[2] : new Date(fila[2]);
+    const price = parseNumber(fila[3]);
 
-    let price = NaN;
-    let startDate = null;
+    if (!clientName || !productName || !_isValidDate(startDate) || !_isValidNumber(price) || price < 0) return;
 
-    if (_isValidNumber(priceA) && !isNaN(dateA.getTime())) {
-      price = priceA;
-      startDate = dateA;
-    } else if (_isValidNumber(priceB) && !isNaN(dateB.getTime())) {
-      price = priceB;
-      startDate = dateB;
-    }
-
-    if (!clientName || !productName || !_isValidNumber(price) || price <= 0 || !startDate) return;
-    out.push({
-      client_name: clientName,
-      product_name: productName,
-      unit_price: price,
-      start_date: startDate
+    const key = _buildPriceKey(clientName, productName);
+    if (!out[key]) out[key] = [];
+    out[key].push({
+      start_date: new Date(startDate),
+      price: price
     });
   });
+
+  Object.keys(out).forEach((key) => {
+    out[key].sort((a, b) => a.start_date.getTime() - b.start_date.getTime());
+  });
+
   return out;
 }
 
-function resolveUnitPrice(args) {
-  const prices = (args && args.prices) || [];
+function getPrice(args) {
+  const pricesMap = (args && args.pricesMap) || {};
   const clientName = normalizeName(args && args.client_name);
   const productName = normalizeName(args && args.product_name);
   const date = args && args.date instanceof Date ? args.date : new Date(args && args.date);
+
   if (!clientName || !productName || isNaN(date.getTime())) return null;
+  const key = _buildPriceKey(clientName, productName);
+  const prices = pricesMap[key];
+  if (!prices || prices.length === 0) return null;
 
   let winner = null;
   prices.forEach((row) => {
-    if (row.client_name !== clientName) return;
-    if (row.product_name !== productName) return;
     if (row.start_date > date) return;
     if (!winner || row.start_date > winner.start_date) {
       winner = row;
     }
   });
-  return winner ? winner.unit_price : null;
+
+  return winner ? winner.price : null;
+}
+
+function _buildPriceKey(clientName, productName) {
+  return `${String(clientName || "").trim().toLowerCase()}|${String(productName || "").trim().toLowerCase()}`;
+}
+
+function _esClienteSinMontoReconstruct(nombre) {
+  const key = String(nombre || "").trim().toLowerCase();
+  return !!(key && CLIENTES_SIN_MONTO_RECONSTRUCT[key]);
 }
 
 function _isUuidV4(value) {
