@@ -56,6 +56,11 @@ class SyncService:
         if not price_list:
             return 0, 0
 
+        SyncService._logger.info(
+            "sync_prices incoming client/product pairs=%s",
+            [(getattr(p, "client_name", None), getattr(p, "product_name", None)) for p in price_list[:20]],
+        )
+
         deduped: dict[tuple[str, str, date], object] = {}
         for row in price_list:
             client_name = normalize_entity_name(row.client_name)
@@ -65,14 +70,10 @@ class SyncService:
 
         client_names = sorted({k[0] for k in deduped})
         product_names = sorted({k[1] for k in deduped})
-        client_map = {
-            name: id_
-            for id_, name in db.execute(select(Client.id, Client.name).where(Client.name.in_(client_names))).all()
-        }
-        product_map = {
-            name: id_
-            for id_, name in db.execute(select(Product.id, Product.name).where(Product.name.in_(product_names))).all()
-        }
+        client_map = SyncService._load_entity_map(db, Client)
+        product_map = SyncService._load_entity_map(db, Product)
+        SyncService._logger.info("sync_prices loaded clients=%s products=%s", len(client_map), len(product_map))
+        SyncService._logger.info("sync_prices product keys sample=%s", list(product_map.keys())[:20])
 
         missing_clients = sorted(name for name in client_names if name not in client_map)
         missing_products = sorted(name for name in product_names if name not in product_map)
@@ -336,18 +337,17 @@ class SyncService:
                 client_names.add(normalize_entity_name(client_payment.client_name))
                 SyncService._validate_numeric_precision(client_payment.subtotal, 14, 4, "client_payment.subtotal")
 
-        client_map = {
-            name: id_
-            for id_, name in db.execute(select(Client.id, Client.name).where(Client.name.in_(sorted(client_names)))).all()
-        }
-        product_map = {
-            name: id_
-            for id_, name in db.execute(select(Product.id, Product.name).where(Product.name.in_(sorted(product_names)))).all()
-        }
-        employee_map = {
-            name: id_
-            for id_, name in db.execute(select(Employee.id, Employee.name).where(Employee.name.in_(sorted(employee_names)))).all()
-        }
+        client_map = SyncService._load_entity_map(db, Client)
+        product_map = SyncService._load_entity_map(db, Product)
+        employee_map = SyncService._load_entity_map(db, Employee)
+        SyncService._logger.info(
+            "sync_full loaded entity maps clients=%s products=%s employees=%s",
+            len(client_map),
+            len(product_map),
+            len(employee_map),
+        )
+        SyncService._logger.info("sync_full incoming product keys=%s", sorted(product_names))
+        SyncService._logger.info("sync_full db product keys sample=%s", list(product_map.keys())[:30])
 
         missing_clients = sorted(name for name in client_names if name not in client_map)
         missing_products = sorted(name for name in product_names if name not in product_map)
@@ -488,6 +488,14 @@ class SyncService:
             raise ValueError(f"{field_name} has too many decimal places (max {scale})")
         if integer_digits > (precision - scale):
             raise ValueError(f"{field_name} exceeds numeric({precision},{scale})")
+
+    @staticmethod
+    def _load_entity_map(db: Session, model) -> dict[str, UUID]:
+        rows = db.execute(select(model.id, model.name)).all()
+        mapping: dict[str, UUID] = {}
+        for entity_id, entity_name in rows:
+            mapping[normalize_entity_name(entity_name)] = entity_id
+        return mapping
 
     @staticmethod
     def _get_movement_types(db: Session, movement_ids: set[UUID]) -> dict[UUID, MovementType]:
