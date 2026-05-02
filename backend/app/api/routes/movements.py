@@ -263,20 +263,8 @@ def get_entities(db: Session = Depends(get_db)) -> EntitiesOut:
 
 
 @router.get("/balance", response_model=BalanceOut)
-def get_balance(
-    date_from: date | None = Query(default=None),
-    date_to: date | None = Query(default=None),
-    type: MovementType | None = Query(default=None),
-    db: Session = Depends(get_db),
-) -> BalanceOut:
-    stmt = select(Movement).where(
-        *_build_movements_filters(
-            date_from=date_from,
-            date_to=date_to,
-            movement_type=type,
-        )
-    )
-    movements = db.scalars(stmt).all()
+def get_balance(db: Session = Depends(get_db)) -> BalanceOut:
+    movements = db.query(Movement).all()
 
     balance = Decimal("0")
     sum_types = {"entrega_dinero", "pago_cliente", "venta"}
@@ -288,14 +276,15 @@ def get_balance(
             if hasattr(m.type, "value")
             else str(m.type).lower()
         )
-        print("TYPE:", m.type, "NORMALIZED:", tipo, "AMOUNT:", amount)
 
         if tipo in sum_types:
             balance += amount
         else:
             balance -= amount
 
-    return BalanceOut(balance=balance)
+    print("TOTAL MOVEMENTS:", len(movements))
+    print("BALANCE:", balance)
+    return {"balance": str(balance)}
 
 
 @router.get("/{movement_id}", response_model=MovementOut)

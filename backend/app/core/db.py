@@ -4,6 +4,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from app.core.config import get_settings
 
 settings = get_settings()
+print("DB CONNECTED:", settings.database_url)
 
 engine = create_engine(
     settings.database_url,

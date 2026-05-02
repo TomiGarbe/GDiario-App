@@ -1,5 +1,4 @@
 import { request } from "../lib/api";
-import { qs } from "../lib/qs";
 import type { Balance, EntitiesResponse, Movement } from "../types/api";
 
 export const movementService = {
@@ -28,6 +27,6 @@ export const movementService = {
   entities: () =>
     request<EntitiesResponse>("/movements/entities"),
 
-  balance: (params?: Record<string, any>) =>
-    request<Balance>(`/movements/balance?${qs(params)}`),
+  balance: () =>
+    request<Balance>("/movements/balance"),
 };

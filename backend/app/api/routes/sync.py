@@ -100,6 +100,7 @@ def sync_movement_client_payments(data: list[MovementClientPaymentSyncPayload], 
 @router.post("/full", response_model=SyncFullResponse, status_code=status.HTTP_200_OK)
 def sync_full(data: SyncFullRequest, db: Session = Depends(get_db)) -> SyncFullResponse:
     try:
+        print("SYNC FULL CALLED")
         with db.begin():
             result = SyncService.sync_full(db=db, period=data.period, movements=data.movements)
         return SyncFullResponse(**result)

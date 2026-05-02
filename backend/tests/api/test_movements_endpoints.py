@@ -108,13 +108,12 @@ def test_movements_and_balance_scenarios(client):
     # compra -100, venta +200, pago_cliente +30, gasto -10 => 120
     assert balance == Decimal("120.0000")
 
-    venta_balance = client.get("/api/movements/balance", params={"type": "venta"})
-    assert venta_balance.status_code == 200
-    assert Decimal(str(venta_balance.json()["balance"])) == Decimal("200.0000")
-
-    compra_balance = client.get("/api/movements/balance", params={"type": "compra"})
-    assert compra_balance.status_code == 200
-    assert Decimal(str(compra_balance.json()["balance"])) == Decimal("-100.0000")
+    balance_with_ignored_params = client.get(
+        "/api/movements/balance",
+        params={"date_from": "2026-01-01", "date_to": "2026-01-31", "period_id": 1, "type": "venta"},
+    )
+    assert balance_with_ignored_params.status_code == 200
+    assert Decimal(str(balance_with_ignored_params.json()["balance"])) == Decimal("120.0000")
 
 
 def test_movements_filters_and_pagination(client):

@@ -479,11 +479,7 @@ function fetchConAuth(data) {
   }
 
   if (action === 'obtenerSaldo') {
-    var fecha = String(payload.fecha || payload.date || getTodayIso()).trim();
-    var fechaIso = toIsoDate(fecha) || getTodayIso();
-    var qsSaldo = buildQueryString({ date_from: fechaIso, date_to: fechaIso });
-
-    return request('/movements/balance' + qsSaldo).then(function(resp) {
+    return request('/movements/balance').then(function(resp) {
       return { saldo: toNum(resp && resp.balance) };
     });
   }

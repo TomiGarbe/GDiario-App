@@ -16,10 +16,7 @@ export function useBalance(initialDate: string) {
     try {
       setLoading(true);
       setError(null);
-      const data = await movementService.balance({
-        date_from: targetDate,
-        date_to: targetDate,
-      });
+      const data = await movementService.balance();
       setBalance(data);
       setDate(targetDate);
     } catch (err) {
