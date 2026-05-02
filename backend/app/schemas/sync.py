@@ -286,3 +286,11 @@ class SyncFullResponse(BaseModel):
     movement_items: SyncBatchResult
     movement_salaries: SyncBatchResult
     movement_client_payments: SyncBatchResult
+
+
+class SyncFullExportResponse(BaseModel):
+    schema_version: Literal["v2"] = "v2"
+    movements: list[MovementSyncPayload] = Field(default_factory=list)
+    movement_items: list[MovementItemSyncPayload] = Field(default_factory=list)
+    movement_salaries: list[MovementSalarySyncPayload] = Field(default_factory=list)
+    movement_client_payments: list[MovementClientPaymentSyncPayload] = Field(default_factory=list)

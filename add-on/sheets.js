@@ -1,36 +1,18 @@
-function writeMovements(movements) {
-  const sheet = _getOrCreateSheet("MOVEMENTS");
-  sheet.clear();
-
-  const headers = ["id", "type", "date", "amount", "description"];
-  sheet.appendRow(headers);
-
-  const rows = (movements || []).map(m => [
-    m.id,
-    m.type,
-    m.date,
-    m.amount,
-    m.description || ""
-  ]);
-
-  if (rows.length > 0) {
-    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
-  }
-
-  aplicarFormatoTablaGenerica(sheet, 2, [4]);
-}
-
 function ensureMovementItemsSheet() {
-  return _ensureSheetWithHeaders("MOVEMENT_ITEMS", ["movement_id", "client", "product", "quantity", "unit_price", "subtotal"]);
+  return _ensureSheetWithHeaders("ITEMS", ["movement_id", "client", "product", "quantity", "unit_price", "subtotal"]);
 }
 
 function ensureMovementSalariesSheet() {
-  return _ensureSheetWithHeaders("MOVEMENT_SALARIES", ["movement_id", "employee", "subtotal"]);
+  return _ensureSheetWithHeaders("SALARIES", ["movement_id", "employee", "subtotal"]);
+}
+
+function ensureMovementClientPaymentsSheet() {
+  return _ensureSheetWithHeaders("CLIENT_PAYMENTS", ["movement_id", "client_name", "subtotal"]);
 }
 
 function writeMovementItems(items) {
   const headers = ["movement_id", "client", "product", "quantity", "unit_price", "subtotal"];
-  const sheet = _writeSheetRows("MOVEMENT_ITEMS", headers, items, (item) => [
+  const sheet = _writeSheetRows("ITEMS", headers, items, (item) => [
     item.movement_id ?? "",
     item.client ?? "",
     item.product ?? "",
@@ -44,7 +26,7 @@ function writeMovementItems(items) {
 
 function writeMovementSalaries(salaries) {
   const headers = ["movement_id", "employee", "subtotal"];
-  const sheet = _writeSheetRows("MOVEMENT_SALARIES", headers, salaries, (salary) => [
+  const sheet = _writeSheetRows("SALARIES", headers, salaries, (salary) => [
     salary.movement_id ?? "",
     salary.employee ?? "",
     salary.subtotal ?? ""
@@ -53,20 +35,15 @@ function writeMovementSalaries(salaries) {
   aplicarFormatoTablaGenerica(sheet, 0, [3]);
 }
 
-function readMovementsSheet() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("MOVEMENTS");
-  if (!sheet) throw new Error("No existe la hoja MOVEMENTS. Hace un fetch primero.");
+function writeMovementClientPayments(clientPayments) {
+  const headers = ["movement_id", "client_name", "subtotal"];
+  const sheet = _writeSheetRows("CLIENT_PAYMENTS", headers, clientPayments, (payment) => [
+    payment.movement_id ?? "",
+    payment.client_name ?? "",
+    payment.subtotal ?? ""
+  ]);
 
-  return sheet.getDataRange().getValues().slice(1).map(r => ({
-    id:          r[0],
-    date:        r[1],
-    type:        r[2],
-    client:      r[3],
-    employee:    r[4],
-    amount:      r[5],
-    description: r[6],
-    source:      r[7]
-  }));
+  aplicarFormatoTablaGenerica(sheet, 0, [3]);
 }
 
 function _getOrCreateSheet(nombre) {

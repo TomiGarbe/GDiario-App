@@ -16,258 +16,552 @@ const TIPO_MOVEMENT_FROM_BACKEND = {
   "venta": "Venta",
   "gasto": "Gasto",
   "sueldo": "Sueldo",
-  "pago": "Pago",
   "pago_cliente": "Pago",
   "entrega_dinero": "Entrega"
 };
 
-function fetchFromBackend() {
-  Logger.log("Fetch desde backend iniciado");
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-  const response = UrlFetchApp.fetch(`${API_URL}/movements`, { muteHttpExceptions: true });
+function fetchFromBackend() {
+  const startedAt = new Date().getTime();
+  Logger.log("Fetch desde backend iniciado (sync/full v2)");
+
+  const periodId = _getSyncPeriodId();
+  const response = UrlFetchApp.fetch(`${API_URL}/sync/full?period_id=${encodeURIComponent(periodId)}`, { muteHttpExceptions: true });
   const code = response.getResponseCode();
+  const raw = response.getContentText();
   if (code < 200 || code >= 300) {
-    throw new Error(`Error en fetch: HTTP ${code} - ${response.getContentText()}`);
+    throw new Error(`Error en fetch sync/full: HTTP ${code} - ${raw}`);
   }
 
-  const data = JSON.parse(response.getContentText()) || {};
-  const movementsRaw = Array.isArray(data.movements) ? data.movements : (Array.isArray(data) ? data : []);
-  const itemsRaw = Array.isArray(data.items) ? data.items : [];
-  const salariesRaw = Array.isArray(data.salaries) ? data.salaries : [];
+  const data = JSON.parse(raw) || {};
+  const payload = validatePayload(data);
+  rebuildSheets(payload);
 
-  const movements = movementsRaw.filter((m) => {
-    const id = _strOrNull(m && m.id);
-    const amount = _numOrNull(m && m.amount);
-    return !!id && id.indexOf("-") === -1 && amount !== null;
-  });
-  const items = itemsRaw.filter((it) => {
-    const movementId = _strOrNull(it && it.movement_id);
-    const subtotal = _numOrNull(it && it.subtotal);
-    return !!movementId && movementId.indexOf("-") === -1 && subtotal !== null;
-  });
-  const salaries = salariesRaw.filter((s) => {
-    const movementId = _strOrNull(s && s.movement_id);
-    const subtotal = _numOrNull(s && s.subtotal);
-    return !!movementId && movementId.indexOf("-") === -1 && subtotal !== null;
-  });
-
-  writeMovements(movements);
-  writeMovementItems(items);
-  writeMovementSalaries(salaries);
-
-  Logger.log("Fetch completado");
+  const elapsedMs = new Date().getTime() - startedAt;
+  Logger.log(
+    `Rebuild completado | movements=${payload.movements.length} items=${payload.movement_items.length} salaries=${payload.movement_salaries.length} client_payments=${payload.movement_client_payments.length} duration_ms=${elapsedMs}`
+  );
 }
 
 function syncToBackend() {
   Logger.log("Sync iniciado");
 
+  const extracted = extractFromSheets();
+  const normalized = normalizeData(extracted);
+  const deduplicated = deduplicatePayload(normalized);
+  const payload = buildSyncPayload(deduplicated);
+  enforceNoIdCollisions(payload);
+  validateBatch(payload);
+  sendToBackend(payload);
+
+  Logger.log("Sync completado");
+}
+
+function extractFromSheets() {
   const result = reconstruirMovimientos() || {};
-  const movementsRaw = Array.isArray(result.movements) ? result.movements : [];
-  const itemsRaw = Array.isArray(result.items) ? result.items : [];
-  const salariesRaw = Array.isArray(result.salaries) ? result.salaries : [];
+  return {
+    movements: Array.isArray(result.movements) ? result.movements : [],
+    movement_items: Array.isArray(result.movement_items) ? result.movement_items : [],
+    movement_salaries: Array.isArray(result.movement_salaries) ? result.movement_salaries : [],
+    movement_client_payments: Array.isArray(result.movement_client_payments) ? result.movement_client_payments : []
+  };
+}
 
-  const movements = movementsRaw.filter((m) => {
-    const id = _strOrNull(m && m.id);
-    const amount = _numOrNull(m && m.amount);
-    return !!id && id.indexOf("-") === -1 && amount !== null;
-  });
-  const items = itemsRaw.filter((it) => {
-    const movementId = _strOrNull(it && it.movement_id);
-    const subtotal = _numOrNull(it && it.subtotal);
-    return !!movementId && movementId.indexOf("-") === -1 && subtotal !== null;
-  });
-  const salaries = salariesRaw.filter((s) => {
-    const movementId = _strOrNull(s && s.movement_id);
-    const subtotal = _numOrNull(s && s.subtotal);
-    return !!movementId && movementId.indexOf("-") === -1 && subtotal !== null;
+function normalizeData(raw) {
+  const movementIdMap = _getOrCreateStableIdMap("movement");
+  const itemIdMap = _getOrCreateStableIdMap("movement_item");
+  const salaryIdMap = _getOrCreateStableIdMap("movement_salary");
+  const clientPaymentIdMap = _getOrCreateStableIdMap("movement_client_payment");
+
+  const existingIds = _loadExistingIdsFromSheets(raw);
+
+  const clientsMap = {};
+  const productsMap = {};
+  const employeesMap = {};
+
+  const movements = (raw.movements || []).map((m) => ({
+    id: _ensureUuidImmutable(m && m.id, _movementFingerprint(m), movementIdMap, existingIds.movements),
+    type: _normalizeMovementType(m && m.type),
+    date: _formatearFecha(m && m.date),
+    amount: _numOrNull(m && m.amount),
+    description: _normalizeText(m && m.description),
+    client: _mapNormalizedEntity(clientsMap, normalizeName(m && m.client))
+  })).filter((m) => m.type && m.date && m.amount !== null);
+
+  const movementIds = {};
+  movements.forEach((m) => { movementIds[m.id] = true; });
+
+  const movementItems = (raw.movement_items || []).map((it) => ({
+    id: _ensureUuidImmutable(
+      it && it.id,
+      _movementItemFingerprint(it),
+      itemIdMap,
+      existingIds.movement_items
+    ),
+    movement_id: _ensureUuidImmutable(it && it.movement_id, _movementRefFingerprint(it && it.movement_id), movementIdMap, existingIds.movements),
+    client_name: _mapNormalizedEntity(clientsMap, normalizeName(it && (it.client_name || it.client))),
+    product_name: _mapNormalizedEntity(productsMap, normalizeName(it && (it.product_name || it.product))),
+    quantity: _numOrNull(it && it.quantity),
+    unit_price: _numOrNull(it && it.unit_price),
+    subtotal: _numOrNull(it && it.subtotal)
+  })).filter((it) => (
+    movementIds[it.movement_id] &&
+    it.client_name &&
+    it.product_name &&
+    it.quantity !== null &&
+    it.unit_price !== null &&
+    it.subtotal !== null
+  ));
+
+  const movementSalaries = (raw.movement_salaries || []).map((s) => ({
+    id: _ensureUuidImmutable(
+      s && s.id,
+      _movementSalaryFingerprint(s),
+      salaryIdMap,
+      existingIds.movement_salaries
+    ),
+    movement_id: _ensureUuidImmutable(s && s.movement_id, _movementRefFingerprint(s && s.movement_id), movementIdMap, existingIds.movements),
+    employee_name: _mapNormalizedEntity(employeesMap, normalizeName(s && (s.employee_name || s.employee))),
+    subtotal: _numOrNull(s && (s.subtotal ?? s.amount)),
+    description: _normalizeText(s && s.description)
+  })).filter((s) => (
+    movementIds[s.movement_id] &&
+    s.employee_name &&
+    s.subtotal !== null
+  ));
+
+  const movementClientPayments = (raw.movement_client_payments || []).map((cp) => ({
+    id: _ensureUuidImmutable(
+      cp && cp.id,
+      _movementClientPaymentFingerprint(cp),
+      clientPaymentIdMap,
+      existingIds.movement_client_payments
+    ),
+    movement_id: _ensureUuidImmutable(cp && cp.movement_id, _movementRefFingerprint(cp && cp.movement_id), movementIdMap, existingIds.movements),
+    client_name: _mapNormalizedEntity(clientsMap, normalizeName(cp && (cp.client_name || cp.client))),
+    subtotal: _numOrNull(cp && (cp.subtotal ?? cp.amount)),
+    description: _normalizeText(cp && cp.description)
+  })).filter((cp) => (
+    movementIds[cp.movement_id] &&
+    cp.client_name &&
+    cp.subtotal !== null
+  ));
+
+  return {
+    movements,
+    movement_items: movementItems,
+    movement_salaries: movementSalaries,
+    movement_client_payments: movementClientPayments
+  };
+}
+
+function buildSyncPayload(data) {
+  const syncBatchId = generateSyncBatchId();
+  Logger.log(`sync_batch_id generado: ${syncBatchId}`);
+  return {
+    schema_version: "v2",
+    sync_batch_id: syncBatchId,
+    movements: data.movements || [],
+    movement_items: data.movement_items || [],
+    movement_salaries: (data.movement_salaries || []).map((s) => ({
+      id: s.id,
+      movement_id: s.movement_id,
+      employee_name: s.employee_name,
+      subtotal: s.subtotal
+    })),
+    movement_client_payments: (data.movement_client_payments || []).map((cp) => ({
+      id: cp.id,
+      movement_id: cp.movement_id,
+      client_name: cp.client_name,
+      subtotal: cp.subtotal
+    }))
+  };
+}
+
+function validateBatch(payload) {
+  const sumsByMovement = {};
+
+  payload.movements.forEach((m) => {
+    sumsByMovement[m.id] = { movement_amount: _toCents(m.amount), details_sum: 0 };
   });
 
-  const payload = { movements, items, salaries };
+  payload.movement_items.forEach((it) => {
+    const expectedSubtotal = _toCents((_numOrNull(it.quantity) || 0) * (_numOrNull(it.unit_price) || 0));
+    const gotSubtotal = _toCents(it.subtotal);
+    if (expectedSubtotal !== gotSubtotal) {
+      errors.push({
+        movement_id: it.movement_id,
+        type: "ITEM_SUBTOTAL_MISMATCH",
+        detail: `client=${it.client_name} product=${it.product_name} expected_subtotal=${(expectedSubtotal / 100).toFixed(2)} got_subtotal=${(gotSubtotal / 100).toFixed(2)}`
+      });
+    }
+    if (!sumsByMovement[it.movement_id]) return;
+    sumsByMovement[it.movement_id].details_sum += _toCents(it.subtotal);
+  });
+
+  payload.movement_salaries.forEach((s) => {
+    if (!sumsByMovement[s.movement_id]) return;
+    sumsByMovement[s.movement_id].details_sum += _toCents(s.subtotal);
+  });
+
+  payload.movement_client_payments.forEach((cp) => {
+    if (!sumsByMovement[cp.movement_id]) return;
+    sumsByMovement[cp.movement_id].details_sum += _toCents(cp.subtotal);
+  });
+
+  const errors = [];
+  Object.keys(sumsByMovement).forEach((movementId) => {
+    const movementAmount = sumsByMovement[movementId].movement_amount;
+    const detailsSum = sumsByMovement[movementId].details_sum;
+    if (movementAmount !== detailsSum) {
+      errors.push({
+        movement_id: movementId,
+        type: "AMOUNT_MISMATCH",
+        detail: `amount=${(movementAmount / 100).toFixed(2)} details_sum=${(detailsSum / 100).toFixed(2)}`
+      });
+    }
+  });
+
+  if (errors.length) {
+    const lines = errors.map((e) => `movement_id=${e.movement_id} | ${e.type} | ${e.detail}`);
+    throw new Error(`Validación fallida:\n${lines.join("\n")}`);
+  }
+}
+
+function sendToBackend(payload) {
+  const requestBody = payload;
 
   const response = UrlFetchApp.fetch(`${API_URL}/sync/full`, {
     method: "post",
     contentType: "application/json",
-    payload: JSON.stringify(payload),
+    payload: JSON.stringify(requestBody),
     muteHttpExceptions: true
   });
 
   const code = response.getResponseCode();
+  const bodyText = response.getContentText();
+
   if (code < 200 || code >= 300) {
-    throw new Error(`Error en sync: HTTP ${code} - ${response.getContentText()}`);
+    _logBackendError(bodyText, payload);
+    throw new Error(`Error en sync/full: HTTP ${code} - ${bodyText}`);
   }
 
-  Logger.log("Sync completado: " + response.getContentText());
+  Logger.log("Sync completado: " + bodyText);
 }
 
-function _syncPeriod(ss) {
-  const period = _parsearPeriodDesdeNombre(ss);
-  return _post("/sync/period", { sheet_id: ss.getId(), period });
+function _logBackendError(bodyText, payload) {
+  let parsed = null;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch (e) {
+    Logger.log("Backend error sin JSON parseable: " + bodyText);
+    return;
+  }
+
+  const movementIds = {};
+  payload.movements.forEach((m) => { movementIds[m.id] = true; });
+
+  const detail = parsed && parsed.detail;
+  if (Array.isArray(detail)) {
+    detail.forEach((item) => {
+      Logger.log(`Backend error | movement_id=unknown | type=validation | detail=${JSON.stringify(item)}`);
+    });
+    return;
+  }
+
+  let movementId = "unknown";
+  if (typeof detail === "string") {
+    const found = Object.keys(movementIds).find((id) => detail.indexOf(id) !== -1);
+    if (found) movementId = found;
+    Logger.log(`Backend error | movement_id=${movementId} | type=business | detail=${detail}`);
+    return;
+  }
+
+  Logger.log(`Backend error | movement_id=unknown | type=unknown | detail=${bodyText}`);
 }
 
-function _syncClientes(precios) {
-  const names = [...new Set(precios.map((p) => p.client).filter(Boolean))];
-  if (!names.length) return;
-  _post("/sync/clients", { names });
+function _normalizeMovementType(type) {
+  const t = _strOrNull(type);
+  if (!t) return null;
+  const mapped = TIPO_MOVEMENT_TO_BACKEND[t] || t.toLowerCase();
+  return mapped;
 }
 
-function _syncPrecios(precios) {
-  if (!precios.length) return;
-  _post("/sync/prices", { prices: precios });
+function _normalizeText(value) {
+  const s = _strOrNull(value);
+  if (!s) return null;
+  return s.replace(/\s+/g, " ").trim();
 }
 
-function _syncMovements(period_id) {
-  Logger.log("Sync iniciado");
+function normalizeName(value) {
+  const s = _normalizeText(value);
+  if (!s) return null;
+  return s
+    .toLowerCase()
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
-  const reconstructed = reconstruirMovimientos();
-  const movementsRaw = reconstructed.movements || [];
-  const itemsRaw = reconstructed.items || [];
-  const salariesRaw = reconstructed.salaries || [];
+function _normalizeName(value) {
+  return normalizeName(value);
+}
 
-  const movementMap = {};
-  const movements = movementsRaw
-    .map((m) => {
-      const id = _strOrNull(m.id);
-      const typeRaw = _strOrNull(m.type);
-      const type = TIPO_MOVEMENT_TO_BACKEND[typeRaw] || typeRaw.toLowerCase();
-      const amount = _numOrNull(m.amount);
+function _mapNormalizedEntity(entityMap, normalizedName) {
+  if (!normalizedName) return null;
+  if (!entityMap[normalizedName]) {
+    entityMap[normalizedName] = normalizedName;
+  }
+  return entityMap[normalizedName];
+}
 
-      if (!id || id.indexOf("-") !== -1) return null;
-      if (!m.date || !type || amount === null) return null;
+function _ensureUuid(value) {
+  const s = _strOrNull(value);
+  if (!s) return Utilities.getUuid();
+  if (UUID_V4_REGEX.test(s)) return s.toLowerCase();
+  return Utilities.getUuid();
+}
 
-      const out = {
-        id,
-        period_id,
-        date: _formatearFecha(m.date),
-        type,
-        amount,
-        description: _strOrNull(m.description)
-      };
+function generateUUID() {
+  return Utilities.getUuid().toLowerCase();
+}
 
-      movementMap[id] = type;
-      return out;
-    })
-    .filter(Boolean);
+function generateSyncBatchId() {
+  return generateUUID();
+}
 
-  const items = itemsRaw
-    .map((it) => {
-      const movementId = _strOrNull(it.movement_id);
-      const client = _strOrNull(it.client);
-      const product = _strOrNull(it.product);
-      const quantity = _numOrNull(it.quantity);
-      const unitPrice = _numOrNull(it.unit_price);
-      const subtotal = _numOrNull(it.subtotal);
+function _ensureUuidImmutable(value, fingerprint, stableMap, existingIdSet) {
+  const s = _strOrNull(value);
+  if (s && UUID_V4_REGEX.test(s)) {
+    if (fingerprint) stableMap[fingerprint] = s.toLowerCase();
+    return s.toLowerCase();
+  }
+  if (fingerprint && stableMap[fingerprint] && UUID_V4_REGEX.test(stableMap[fingerprint])) {
+    return stableMap[fingerprint].toLowerCase();
+  }
 
-      if (!movementId || movementId.indexOf("-") !== -1) return null;
-      if (!movementMap[movementId]) return null;
-      if (!client || !product) return null;
-      if (quantity === null || unitPrice === null || subtotal === null) return null;
+  let generated = generateUUID();
+  while (existingIdSet[generated]) {
+    generated = generateUUID();
+  }
+  if (fingerprint) stableMap[fingerprint] = generated;
+  existingIdSet[generated] = true;
+  _saveStableIdMaps();
+  return generated;
+}
 
-      return {
-        id: _uuidFromParts("item", movementId, client, product, quantity, unitPrice, subtotal),
-        movement_id: movementId,
-        client_name: client,
-        product_name: product,
-        quantity,
-        unit_price: unitPrice,
-        subtotal
-      };
-    })
-    .filter(Boolean);
+function _stableMapKey(namespace) {
+  return `UUID_MAP_${namespace}`;
+}
 
-  const clientPayments = itemsRaw
-    .map((it) => {
-      const movementId = _strOrNull(it.movement_id);
-      const client = _strOrNull(it.client);
-      const subtotal = _numOrNull(it.subtotal);
+const _STABLE_ID_MAP_CACHE = {};
 
-      if (!movementId || movementId.indexOf("-") !== -1) return null;
-      if (movementMap[movementId] !== "pago_cliente") return null;
-      if (!client || subtotal === null) return null;
+function _getOrCreateStableIdMap(namespace) {
+  if (_STABLE_ID_MAP_CACHE[namespace]) return _STABLE_ID_MAP_CACHE[namespace];
+  const raw = PropertiesService.getDocumentProperties().getProperty(_stableMapKey(namespace));
+  let parsed = {};
+  if (raw) {
+    try {
+      parsed = JSON.parse(raw) || {};
+    } catch (e) {
+      parsed = {};
+    }
+  }
+  _STABLE_ID_MAP_CACHE[namespace] = parsed;
+  return parsed;
+}
 
-      return {
-        id: _uuidFromParts("cp", movementId, client, subtotal),
-        movement_id: movementId,
-        client_name: client,
-        subtotal
-      };
-    })
-    .filter(Boolean);
+function _saveStableIdMaps() {
+  const props = PropertiesService.getDocumentProperties();
+  Object.keys(_STABLE_ID_MAP_CACHE).forEach((namespace) => {
+    props.setProperty(_stableMapKey(namespace), JSON.stringify(_STABLE_ID_MAP_CACHE[namespace]));
+  });
+}
 
-  const salaries = salariesRaw
-    .map((s) => {
-      const movementId = _strOrNull(s.movement_id);
-      const employee = _strOrNull(s.employee);
-      const subtotal = _numOrNull(s.subtotal);
+function _fingerprint(parts) {
+  return JSON.stringify(parts.map((p) => p === undefined || p === null ? "" : p));
+}
 
-      if (!movementId || movementId.indexOf("-") !== -1) return null;
-      if (!movementMap[movementId] || movementMap[movementId] === "entrega_dinero") return null;
-      if (!employee || subtotal === null) return null;
+function _movementFingerprint(m) {
+  return _fingerprint([
+    _normalizeMovementType(m && m.type),
+    _formatearFecha(m && m.date),
+    _numOrNull(m && m.amount),
+    _normalizeText(m && m.description)
+  ]);
+}
 
-      return {
-        id: _uuidFromParts("sal", movementId, employee, subtotal),
-        movement_id: movementId,
-        employee_name: employee,
-        subtotal
-      };
-    })
-    .filter(Boolean);
+function _movementRefFingerprint(movementId) {
+  return _fingerprint([_strOrNull(movementId) || ""]);
+}
 
-  Logger.log("Movements: " + movements.length);
+function _movementItemFingerprint(it) {
+  return _fingerprint([
+    _strOrNull(it && it.movement_id),
+    _normalizeName(it && (it.client_name || it.client)),
+    _normalizeName(it && (it.product_name || it.product)),
+    _numOrNull(it && it.quantity),
+    _numOrNull(it && it.unit_price),
+    _numOrNull(it && it.subtotal)
+  ]);
+}
 
-  const payload = {
-    movements,
-    movement_items: items,
-    movement_salaries: salaries,
-    movement_client_payments: clientPayments
+function _movementSalaryFingerprint(s) {
+  return _fingerprint([
+    _strOrNull(s && s.movement_id),
+    _normalizeName(s && (s.employee_name || s.employee)),
+    _numOrNull(s && (s.subtotal ?? s.amount))
+  ]);
+}
+
+function _movementClientPaymentFingerprint(cp) {
+  return _fingerprint([
+    _strOrNull(cp && cp.movement_id),
+    _normalizeName(cp && (cp.client_name || cp.client)),
+    _numOrNull(cp && (cp.subtotal ?? cp.amount))
+  ]);
+}
+
+function _loadExistingIdsFromSheets(raw) {
+  const ids = {
+    movements: {},
+    movement_items: {},
+    movement_salaries: {},
+    movement_client_payments: {}
   };
 
-  _post("/sync/full", payload);
+  (raw.movements || []).forEach((m) => {
+    const id = _strOrNull(m && m.id);
+    if (id && UUID_V4_REGEX.test(id)) ids.movements[id.toLowerCase()] = true;
+  });
+  (raw.movement_items || []).forEach((it) => {
+    const id = _strOrNull(it && it.id);
+    if (id && UUID_V4_REGEX.test(id)) ids.movement_items[id.toLowerCase()] = true;
+    const movementId = _strOrNull(it && it.movement_id);
+    if (movementId && UUID_V4_REGEX.test(movementId)) ids.movements[movementId.toLowerCase()] = true;
+  });
+  (raw.movement_salaries || []).forEach((s) => {
+    const id = _strOrNull(s && s.id);
+    if (id && UUID_V4_REGEX.test(id)) ids.movement_salaries[id.toLowerCase()] = true;
+    const movementId = _strOrNull(s && s.movement_id);
+    if (movementId && UUID_V4_REGEX.test(movementId)) ids.movements[movementId.toLowerCase()] = true;
+  });
+  (raw.movement_client_payments || []).forEach((cp) => {
+    const id = _strOrNull(cp && cp.id);
+    if (id && UUID_V4_REGEX.test(id)) ids.movement_client_payments[id.toLowerCase()] = true;
+    const movementId = _strOrNull(cp && cp.movement_id);
+    if (movementId && UUID_V4_REGEX.test(movementId)) ids.movements[movementId.toLowerCase()] = true;
+  });
+  return ids;
 }
 
-function _syncMovimientos(ss, period_id) {
-  _syncMovements(period_id);
-}
-
-function _syncMovementItems() {}
-function _syncMovementSalaries() {}
-
-function _leerPrecios(ss) {
-  const sheet = ss.getSheetByName("PRECIOS");
-  if (!sheet) return [];
-
-  return sheet.getDataRange().getValues().slice(1)
-    .filter((r) => r[0] && r[1] && r[2] && r[3])
-    .map((r) => ({
-      client: String(r[0]).trim(),
-      product: String(r[1]).trim(),
-      start_date: _formatearFecha(r[2]),
-      price: Number(r[3]) || 0
-    }));
-}
-
-function _parsearPeriodDesdeNombre(ss) {
-  const MESES_NUM = {
-    "ENERO":1,"FEBRERO":2,"MARZO":3,"ABRIL":4,"MAYO":5,"JUNIO":6,
-    "JULIO":7,"AGOSTO":8,"SEPTIEMBRE":9,"OCTUBRE":10,"NOVIEMBRE":11,"DICIEMBRE":12
+function deduplicatePayload(payload) {
+  const original = {
+    movements: (payload.movements || []).length,
+    movement_items: (payload.movement_items || []).length,
+    movement_salaries: (payload.movement_salaries || []).length,
+    movement_client_payments: (payload.movement_client_payments || []).length
   };
+  const duplicateLogs = [];
 
-  const partes = ss.getName().split(" ");
-  const mesStr = partes[1];
-  const year = parseInt(partes[2], 10);
-  const month = MESES_NUM[mesStr];
+  const movementsSeen = {};
+  const movements = (payload.movements || []).filter((m) => {
+    if (movementsSeen[m.id]) {
+      duplicateLogs.push(`movements duplicate id=${m.id}`);
+      return false;
+    }
+    movementsSeen[m.id] = true;
+    return true;
+  });
 
-  if (!year || !month) throw new Error(`No se pudo parsear el periodo del nombre: "${ss.getName()}"`);
+  const itemsSeen = {};
+  const movementItems = (payload.movement_items || []).filter((it) => {
+    const key = _fingerprint([it.movement_id, it.client_name, it.product_name, it.quantity, it.unit_price, it.subtotal]);
+    if (itemsSeen[key]) {
+      duplicateLogs.push(`movement_items duplicate key=${key}`);
+      return false;
+    }
+    itemsSeen[key] = true;
+    return true;
+  });
 
-  const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0);
+  const salariesSeen = {};
+  const movementSalaries = (payload.movement_salaries || []).filter((s) => {
+    const key = _fingerprint([s.movement_id, s.employee_name, s.subtotal]);
+    if (salariesSeen[key]) {
+      duplicateLogs.push(`movement_salaries duplicate key=${key}`);
+      return false;
+    }
+    salariesSeen[key] = true;
+    return true;
+  });
+
+  const clientPaymentsSeen = {};
+  const movementClientPayments = (payload.movement_client_payments || []).filter((cp) => {
+    const key = _fingerprint([cp.movement_id, cp.client_name, cp.subtotal]);
+    if (clientPaymentsSeen[key]) {
+      duplicateLogs.push(`movement_client_payments duplicate key=${key}`);
+      return false;
+    }
+    clientPaymentsSeen[key] = true;
+    return true;
+  });
+
+  duplicateLogs.forEach((line) => Logger.log(`DEDUP_WARNING ${line}`));
+  Logger.log(
+    `DEDUP_SUMMARY movements=${original.movements}->${movements.length} items=${original.movement_items}->${movementItems.length} salaries=${original.movement_salaries}->${movementSalaries.length} client_payments=${original.movement_client_payments}->${movementClientPayments.length}`
+  );
 
   return {
-    year,
-    month,
-    name: `${mesStr} ${year}`,
-    start_date: _formatearFecha(startDate),
-    end_date: _formatearFecha(endDate)
+    movements,
+    movement_items: movementItems,
+    movement_salaries: movementSalaries,
+    movement_client_payments: movementClientPayments
   };
+}
+
+function enforceNoIdCollisions(payload) {
+  _assertNoIdCollisions(
+    payload.movements || [],
+    "movements",
+    (m) => _fingerprint([m.type, m.date, m.amount, m.description])
+  );
+  _assertNoIdCollisions(
+    payload.movement_items || [],
+    "movement_items",
+    (it) => _fingerprint([it.movement_id, it.client_name, it.product_name, it.quantity, it.unit_price, it.subtotal])
+  );
+  _assertNoIdCollisions(
+    payload.movement_salaries || [],
+    "movement_salaries",
+    (s) => _fingerprint([s.movement_id, s.employee_name, s.subtotal])
+  );
+  _assertNoIdCollisions(
+    payload.movement_client_payments || [],
+    "movement_client_payments",
+    (cp) => _fingerprint([cp.movement_id, cp.client_name, cp.subtotal])
+  );
+}
+
+function _assertNoIdCollisions(rows, entityName, hashFn) {
+  const byId = {};
+  rows.forEach((row) => {
+    const id = _strOrNull(row && row.id);
+    if (!id) return;
+    const hash = hashFn(row);
+    if (byId[id] && byId[id] !== hash) {
+      throw new Error(`COLLISION_CRITICA ${entityName} id=${id} tiene contenido distinto en el mismo sync`);
+    }
+    byId[id] = hash;
+  });
+}
+
+function _toCents(value) {
+  const n = _numOrNull(value);
+  if (n === null) return 0;
+  return Math.round(n * 100);
 }
 
 function _strOrNull(val) {
@@ -282,43 +576,113 @@ function _numOrNull(val) {
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
 }
 
-function _post(path, payload) {
-  const res = UrlFetchApp.fetch(`${API_URL}${path}`, {
-    method: "post",
-    contentType: "application/json",
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  });
-
-  const code = res.getResponseCode();
-  if (code < 200 || code >= 300) {
-    throw new Error(`Error en ${path}: HTTP ${code} - ${res.getContentText()}`);
-  }
-
-  return JSON.parse(res.getContentText());
-}
-
-function _get(path) {
-  const res = UrlFetchApp.fetch(`${API_URL}${path}`, { muteHttpExceptions: true });
-  const code = res.getResponseCode();
-  if (code < 200 || code >= 300) {
-    throw new Error(`Error en ${path}: HTTP ${code} - ${res.getContentText()}`);
-  }
-  return JSON.parse(res.getContentText());
-}
-
 function _formatearFecha(valor) {
   const d = valor instanceof Date ? valor : new Date(valor);
+  if (isNaN(d.getTime())) return null;
   return d.toISOString().slice(0, 10);
 }
 
-function _uuidFromParts(prefix) {
-  const args = Array.prototype.slice.call(arguments, 1).map((v) => String(v ?? "")).join("|");
-  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, `${prefix}|${args}`);
-  const hex = bytes.map((b) => {
-    const n = b < 0 ? b + 256 : b;
-    return (n < 16 ? "0" : "") + n.toString(16);
-  }).join("");
-  const v = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-  return v;
+function _getSyncPeriodId() {
+  const scriptProp = PropertiesService.getScriptProperties().getProperty("SYNC_PERIOD_ID");
+  const docProp = PropertiesService.getDocumentProperties().getProperty("SYNC_PERIOD_ID");
+  const raw = _strOrNull(scriptProp) || _strOrNull(docProp);
+  if (!raw) {
+    throw new Error("Falta SYNC_PERIOD_ID. Configuralo en ScriptProperties o DocumentProperties.");
+  }
+
+  const periodId = Number(raw);
+  if (!Number.isInteger(periodId) || periodId <= 0) {
+    throw new Error(`SYNC_PERIOD_ID inválido: ${raw}`);
+  }
+  return periodId;
 }
+
+function validatePayload(data) {
+  if (!data || data.schema_version !== "v2") {
+    throw new Error(`Payload inválido: schema_version esperado "v2", recibido "${data && data.schema_version}"`);
+  }
+
+  const required = ["movements", "movement_items", "movement_salaries", "movement_client_payments"];
+  required.forEach((key) => {
+    if (!Array.isArray(data[key])) {
+      throw new Error(`Payload inválido: falta array obligatorio "${key}"`);
+    }
+  });
+
+  return {
+    movements: data.movements,
+    movement_items: data.movement_items,
+    movement_salaries: data.movement_salaries,
+    movement_client_payments: data.movement_client_payments
+  };
+}
+
+function rebuildSheets(payload) {
+  clearMovements();
+  writeMovementItems([]);
+  writeMovementSalaries([]);
+  writeMovementClientPayments([]);
+
+  writeMovements((payload.movements || []).map((m) => ({
+    id: m.id,
+    type: TIPO_MOVEMENT_FROM_BACKEND[m.type] || m.type,
+    date: m.date,
+    amount: m.amount,
+    description: m.description || "",
+    source: "sync"
+  })));
+
+  writeMovementItems((payload.movement_items || []).map((it) => ({
+    movement_id: it.movement_id,
+    client: it.client_name,
+    product: it.product_name,
+    quantity: it.quantity,
+    unit_price: it.unit_price,
+    subtotal: it.subtotal
+  })));
+
+  writeMovementSalaries((payload.movement_salaries || []).map((s) => ({
+    movement_id: s.movement_id,
+    employee: s.employee_name,
+    subtotal: s.subtotal
+  })));
+
+  writeMovementClientPayments((payload.movement_client_payments || []).map((cp) => ({
+    movement_id: cp.movement_id,
+    client_name: cp.client_name,
+    subtotal: cp.subtotal
+  })));
+
+  _logRebuildConsistency(payload);
+}
+
+function _logRebuildConsistency(payload) {
+  const movementAmountCents = {};
+  (payload.movements || []).forEach((m) => {
+    movementAmountCents[m.id] = _toCents(m.amount);
+  });
+
+  const detailsCents = {};
+  const addDetail = function (movementId, subtotal) {
+    if (movementAmountCents[movementId] === undefined) return;
+    if (detailsCents[movementId] === undefined) detailsCents[movementId] = 0;
+    detailsCents[movementId] += _toCents(subtotal);
+  };
+
+  (payload.movement_items || []).forEach((it) => addDetail(it.movement_id, it.subtotal));
+  (payload.movement_salaries || []).forEach((s) => addDetail(s.movement_id, s.subtotal));
+  (payload.movement_client_payments || []).forEach((cp) => addDetail(cp.movement_id, cp.subtotal));
+
+  Object.keys(movementAmountCents).forEach((movementId) => {
+    const expected = movementAmountCents[movementId];
+    const got = detailsCents[movementId] || 0;
+    if (expected !== got) {
+      Logger.log(
+        `REBUILD_CONSISTENCY_ERROR movement_id=${movementId} amount=${(expected / 100).toFixed(2)} details_sum=${(got / 100).toFixed(2)}`
+      );
+    }
+  });
+}
+
+
+

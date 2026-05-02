@@ -72,11 +72,13 @@ function accionReconstruirMovimientos() {
     Logger.log("Reconstrucción iniciada");
     const result = reconstruirMovimientos() || {};
     const movements = Array.isArray(result.movements) ? result.movements : [];
-    const items = Array.isArray(result.items) ? result.items : [];
-    const salaries = Array.isArray(result.salaries) ? result.salaries : [];
-    writeMovements(movements);
-    writeMovementItems(items);
-    writeMovementSalaries(salaries);
+    const movementItems = Array.isArray(result.movement_items) ? result.movement_items : [];
+    const movementSalaries = Array.isArray(result.movement_salaries) ? result.movement_salaries : [];
+    const movementClientPayments = Array.isArray(result.movement_client_payments) ? result.movement_client_payments : [];
+    writeMovements(movements.map((m) => ({ ...m, source: m && m.source ? m.source : "rebuild" })));
+    writeMovementItems(movementItems);
+    writeMovementSalaries(movementSalaries);
+    writeMovementClientPayments(movementClientPayments);
     Logger.log("Reconstrucción finalizada");
     return notificar('✅ Movimientos reconstruidos');
   } catch (e) {
@@ -141,3 +143,4 @@ function accionActualizarPermisos() {
     return notificar('⚠️ ' + e.message);
   }
 }
+

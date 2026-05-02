@@ -14,6 +14,7 @@ const FILAS_IGNORAR = [
 function calcularMovimientos(ss) {
   const hojaPrecios = ss.getSheetByName("PRECIOS");
   const preciosData = hojaPrecios ? hojaPrecios.getDataRange().getValues().slice(1) : [];
+  const priceRows = _buildNormalizedPriceRows(preciosData);
 
   const hojasOrigen = [
     { nombre: 'GRASA',  producto: 'Grasa',  tipo: 'Compra', colInicio: 2 },
@@ -32,24 +33,34 @@ function calcularMovimientos(ss) {
     let aserrinCordiez = 0;
 
     filas.forEach(fila => {
-      const cliente = fila[0];
-      if (!cliente || FILAS_IGNORAR.includes(cliente)) return;
+      const cliente = normalizeName(fila[0]);
+      const clienteUpper = String(cliente || "").toUpperCase();
+      if (!cliente || FILAS_IGNORAR.includes(clienteUpper)) return;
 
-      const tipo = CLIENTES_VENTA.includes(cliente) ? "Venta" : cfg.tipo;
+      const tipo = CLIENTES_VENTA.includes(clienteUpper) ? "Venta" : cfg.tipo;
 
       // La primera fila de CORDIEZ en HUESOS es aserrín, el resto huesos
       let producto = cfg.producto;
-      if (cfg.nombre === "HUESOS" && cliente === "CORDIEZ" && aserrinCordiez === 0) {
+      if (cfg.nombre === "HUESOS" && clienteUpper === "CORDIEZ" && aserrinCordiez === 0) {
         aserrinCordiez = 1;
         producto = "Aserrin de hueso";
       }
+      producto = normalizeName(producto);
 
       for (let col = cfg.colInicio; col < fechas.length - 2; col++) {
         const fecha = fechas[col];
         const cantidad = fila[col];
         if (!fecha || !cantidad || cantidad === 0) continue;
 
-        const precio = obtenerPrecio(preciosData, cliente, producto, fecha);
+        const precio = resolveUnitPrice({
+          prices: priceRows,
+          client_name: cliente,
+          product_name: producto,
+          date: fecha
+        });
+        if (!Number.isFinite(precio) || precio <= 0) {
+          throw new Error(`Missing price for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}`);
+        }
         const debe  = tipo === "Compra" ? precio * cantidad : 0;
         const haber = tipo === "Venta"  ? precio * cantidad : 0;
 

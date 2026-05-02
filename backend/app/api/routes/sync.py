@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.schemas.sync import (
     SyncFullRequest,
+    SyncFullExportResponse,
     SyncFullResponse,
     MovementClientPaymentSyncPayload,
     MovementItemSyncPayload,
@@ -85,3 +86,12 @@ def sync_full(data: SyncFullRequest, db: Session = Depends(get_db)) -> SyncFullR
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except IntegrityError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Integrity error syncing full payload") from exc
+
+
+@router.get("/full", response_model=SyncFullExportResponse, status_code=status.HTTP_200_OK)
+def get_sync_full(period_id: int, db: Session = Depends(get_db)) -> SyncFullExportResponse:
+    try:
+        result = SyncService.export_full(db=db, period_id=period_id)
+        return SyncFullExportResponse(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
