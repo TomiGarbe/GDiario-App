@@ -10,14 +10,12 @@ function homepage() {
     )
     .addSection(
       CardService.newCardSection()
-        .addWidget(btn('💰 Importar saldo inicial',       'accionImportarSaldoInicial'))
-        .addWidget(btn('🔄 Actualizar detalle del mes',   'accionActualizarDetalle'))
-        .addWidget(btn('👷 Generar resumen de sueldos',   'accionResumenSueldos'))
-        .addWidget(btn('🧱 Reconstruir movimientos',       'accionReconstruirMovimientos'))
-        .addWidget(btn('📊 Distribuir a hojas',           'accionDistribuirMovimientos'))
-        .addWidget(btn('📥 Traer desde DB',               'accionFetchFromBackend'))
-        .addWidget(btn('☁️ Sync a DB',                    'accionSyncToBackend'))
-        .addWidget(btn('🔐 Actualizar permisos',          'accionActualizarPermisos'))
+        .addWidget(btn('💰 Importar saldo inicial', 'accionImportarSaldoInicial'))
+        .addWidget(btn('🔄 Actualizar detalle del mes', 'accionActualizarDetalle'))
+        .addWidget(btn('👷 Generar resumen de sueldos', 'accionResumenSueldos'))
+        .addWidget(btn('🧱 Reconstruir movimientos', 'accionReconstruirMovimientos'))
+        .addWidget(btn('☁️ Sync a DB', 'accionSyncToBackend'))
+        .addWidget(btn('🔐 Actualizar permisos', 'accionActualizarPermisos'))
     )
     .build();
 }
@@ -86,24 +84,6 @@ function accionReconstruirMovimientos() {
   }
 }
 
-function accionDistribuirMovimientos() {
-  try {
-    distribuirMovimientos();
-    return notificar('✅ Movimientos distribuidos a hojas');
-  } catch (e) {
-    return notificar('⚠️ ' + e.message);
-  }
-}
-
-function accionFetchFromBackend() {
-  try {
-    fetchFromBackend();
-    return notificar('✅ Datos traídos desde DB');
-  } catch (e) {
-    return notificar('⚠️ ' + e.message);
-  }
-}
-
 function accionSyncToBackend() {
   try {
     syncToBackend();
@@ -143,4 +123,3 @@ function accionActualizarPermisos() {
     return notificar('⚠️ ' + e.message);
   }
 }
-

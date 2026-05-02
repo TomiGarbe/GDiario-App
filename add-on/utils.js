@@ -46,27 +46,6 @@ function obtenerArchivoMesAnterior() {
   return archivo;
 }
 
-function obtenerArchivos3Meses() {
-  const id = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_OBJETIVO");
-  const ss = SpreadsheetApp.openById(id);
-  const { numero, mesIndex, anio } = parsearNombreArchivo(ss);
-
-  const archivos = [];
-
-  for (let i = 0; i < 3; i++) {
-    let m = mesIndex - i;
-    let y = anio;
-    if (m < 0) { m += 12; y--; }
-
-    const nombre = `${String(numero - i).padStart(2, '0')} ${MESES[m]} ${y}`;
-    const archivo = buscarArchivoPorNombre(nombre);
-    if (archivo) archivos.push(archivo);
-  }
-
-  if (archivos.length === 0) throw new Error("No se encontraron archivos de meses anteriores");
-  return archivos;
-}
-
 function obtenerPrimerDiaMes(ss) {
   const { mes, anio } = parsearNombreArchivo(ss);
   return new Date(anio, MESES.indexOf(mes), 1);

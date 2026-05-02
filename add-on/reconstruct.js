@@ -527,7 +527,7 @@ function _saveReconstructMaps() {
 
 // ========================= DISTRIBUIR =========================
 
-function distribuirMovimientos() {
+function _distribuirMovimientosLegacyNoUsar() {
   const movements = readMovements();
   const items = _readMovementItemsSheet();
   const salaries = _readMovementSalariesSheet();

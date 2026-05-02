@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
+from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, selectinload
 
+from app.models.period import Period
+from app.models.price import Price
 from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
 from app.models.movement_salary import MovementSalary
@@ -20,6 +26,84 @@ from app.services.validation_service import ValidationService
 
 
 class SyncService:
+    _logger = logging.getLogger(__name__)
+
+    @staticmethod
+    def ensure_clients(db: Session, names: Iterable[str]) -> tuple[int, int, int]:
+        normalized_names = [normalize_entity_name(name) for name in names if str(name or "").strip()]
+        if not normalized_names:
+            return 0, 0, 0
+
+        unique_names = list(dict.fromkeys(normalized_names))
+        existing = set(db.execute(select(Client.name).where(Client.name.in_(unique_names))).scalars().all())
+        missing = [name for name in unique_names if name not in existing]
+        created = 0
+        if missing:
+            stmt = pg_insert(Client).values([{"name": name} for name in missing])
+            result = db.execute(stmt.on_conflict_do_nothing(index_elements=[func.lower(Client.name)]))
+            created = int(result.rowcount or 0)
+        SyncService._logger.info(
+            "sync_clients processed=%s unique=%s created=%s",
+            len(normalized_names),
+            len(unique_names),
+            created,
+        )
+        return len(normalized_names), created, len(unique_names) - created
+
+    @staticmethod
+    def upsert_prices(db: Session, prices: Iterable) -> tuple[int, int]:
+        price_list = list(prices)
+        if not price_list:
+            return 0, 0
+
+        deduped: dict[tuple[str, str, date], object] = {}
+        for row in price_list:
+            client_name = normalize_entity_name(row.client_name)
+            product_name = normalize_entity_name(row.product_name)
+            key = (client_name, product_name, row.start_date)
+            deduped[key] = row
+
+        client_names = sorted({k[0] for k in deduped})
+        product_names = sorted({k[1] for k in deduped})
+        client_map = {
+            name: id_
+            for id_, name in db.execute(select(Client.id, Client.name).where(Client.name.in_(client_names))).all()
+        }
+        product_map = {
+            name: id_
+            for id_, name in db.execute(select(Product.id, Product.name).where(Product.name.in_(product_names))).all()
+        }
+
+        missing_clients = sorted(name for name in client_names if name not in client_map)
+        missing_products = sorted(name for name in product_names if name not in product_map)
+        if missing_clients:
+            raise ValueError(f"Clients not found: {', '.join(missing_clients)}")
+        if missing_products:
+            raise ValueError(f"Products not found: {', '.join(missing_products)}")
+
+        rows = []
+        for (client_name, product_name, start_date), item in deduped.items():
+            rows.append(
+                {
+                    "client_id": client_map[client_name],
+                    "product_id": product_map[product_name],
+                    "start_date": start_date,
+                    "price": item.price,
+                }
+            )
+
+        stmt = pg_insert(Price).values(rows)
+        db.execute(
+            stmt.on_conflict_do_update(
+                constraint="uq_prices_client_product_start_date",
+                set_={"price": stmt.excluded.price},
+            )
+        )
+        SyncService._logger.info(
+            "sync_prices processed=%s deduped=%s", len(price_list), len(rows)
+        )
+        return len(price_list), len(rows)
+
     @staticmethod
     def sync_movements(db: Session, movements: Iterable) -> tuple[int, int, int]:
         movement_list = list(movements)
@@ -157,51 +241,253 @@ class SyncService:
         return len(client_payment_list), inserted, deleted
 
     @staticmethod
-    def sync_full(db: Session, movements: Iterable, items: Iterable, salaries: Iterable, client_payments: Iterable) -> dict:
+    def sync_full(db: Session, period, movements: Iterable) -> dict:
+        period_id = SyncService._ensure_period_and_get_movement_period_id(db, period)
         movement_list = list(movements)
-        item_list = list(items)
-        salary_list = list(salaries)
-        client_payment_list = list(client_payments)
+        if not movement_list:
+            SyncService._logger.info("sync_full period=%s/%s with zero movements", period.year, period.month)
+            return {
+                "period_id": period_id,
+                "movements": {"received": 0, "inserted": 0, "updated": 0, "deleted": 0},
+                "movement_items": {"received": 0, "inserted": 0, "updated": 0, "deleted": 0},
+                "movement_salaries": {"received": 0, "inserted": 0, "updated": 0, "deleted": 0},
+                "movement_client_payments": {"received": 0, "inserted": 0, "updated": 0, "deleted": 0},
+            }
 
-        movements_received, movements_inserted, movements_updated = SyncService.sync_movements(db, movement_list)
-        items_received, items_inserted, items_deleted = SyncService.sync_movement_items(db, item_list)
-        salaries_received, salaries_inserted, salaries_deleted = SyncService.sync_movement_salaries(db, salary_list)
-        client_payments_received, client_payments_inserted, client_payments_deleted = SyncService.sync_movement_client_payments(
-            db,
-            client_payment_list,
+        movement_ids = [movement.external_id for movement in movement_list]
+        if len(movement_ids) != len(set(movement_ids)):
+            raise ValueError("Duplicate movement external_id in payload")
+
+        conflicts = db.execute(
+            select(Movement.id).where(Movement.id.in_(movement_ids), Movement.period_id != period_id)
+        ).scalars().all()
+        if conflicts:
+            raise ValueError("Some movement external_id already exist in another period")
+
+        movement_type_map = {movement.external_id: MovementType(movement.type) for movement in movement_list}
+        for movement in movement_list:
+            movement_type = movement_type_map[movement.external_id]
+            if movement_type in (MovementType.COMPRA, MovementType.VENTA):
+                if movement.salaries or movement.client_payments:
+                    raise ValueError(f"Movement {movement.external_id} has invalid detail types for {movement_type.value}")
+            elif movement_type == MovementType.SUELDO:
+                if movement.items or movement.client_payments:
+                    raise ValueError(f"Movement {movement.external_id} has invalid detail types for {movement_type.value}")
+            elif movement_type == MovementType.PAGO_CLIENTE:
+                if movement.items or movement.salaries:
+                    raise ValueError(f"Movement {movement.external_id} has invalid detail types for {movement_type.value}")
+            else:
+                if movement.items or movement.salaries or movement.client_payments:
+                    raise ValueError(f"Movement {movement.external_id} cannot have detail rows")
+
+            SyncService._validate_numeric_precision(movement.amount, 14, 4, "movement.amount")
+
+        existing_in_period = set(
+            db.execute(
+                select(Movement.id).where(Movement.id.in_(movement_ids), Movement.period_id == period_id)
+            ).scalars().all()
         )
 
-        movement_ids = {m.id for m in movement_list}
-        if movement_ids:
-            stored_movements = db.execute(select(Movement).where(Movement.id.in_(movement_ids))).scalars().all()
-            ValidationService.validate_batch_consistency(stored_movements, item_list, salary_list, client_payment_list)
+        movement_rows = [
+            {
+                "id": movement.external_id,
+                "period_id": period_id,
+                "date": movement.date,
+                "type": movement_type_map[movement.external_id],
+                "amount": movement.amount,
+                "description": movement.description,
+            }
+            for movement in movement_list
+        ]
+        stmt = pg_insert(Movement).values(movement_rows)
+        db.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[Movement.id],
+                set_={
+                    "period_id": stmt.excluded.period_id,
+                    "date": stmt.excluded.date,
+                    "type": stmt.excluded.type,
+                    "amount": stmt.excluded.amount,
+                    "description": stmt.excluded.description,
+                },
+            )
+        )
 
+        client_names = set()
+        product_names = set()
+        employee_names = set()
+        total_items_received = 0
+        total_salaries_received = 0
+        total_client_payments_received = 0
+        for movement in movement_list:
+            total_items_received += len(movement.items)
+            total_salaries_received += len(movement.salaries)
+            total_client_payments_received += len(movement.client_payments)
+            for item in movement.items:
+                client_names.add(normalize_entity_name(item.client_name))
+                product_names.add(normalize_entity_name(item.product_name))
+                SyncService._validate_numeric_precision(item.quantity, 14, 4, "item.quantity")
+                SyncService._validate_numeric_precision(item.unit_price, 14, 4, "item.unit_price")
+                SyncService._validate_numeric_precision(item.subtotal, 14, 4, "item.subtotal")
+            for salary in movement.salaries:
+                employee_names.add(normalize_entity_name(salary.employee_name))
+                SyncService._validate_numeric_precision(salary.subtotal, 14, 4, "salary.subtotal")
+            for client_payment in movement.client_payments:
+                client_names.add(normalize_entity_name(client_payment.client_name))
+                SyncService._validate_numeric_precision(client_payment.subtotal, 14, 4, "client_payment.subtotal")
+
+        client_map = {
+            name: id_
+            for id_, name in db.execute(select(Client.id, Client.name).where(Client.name.in_(sorted(client_names)))).all()
+        }
+        product_map = {
+            name: id_
+            for id_, name in db.execute(select(Product.id, Product.name).where(Product.name.in_(sorted(product_names)))).all()
+        }
+        employee_map = {
+            name: id_
+            for id_, name in db.execute(select(Employee.id, Employee.name).where(Employee.name.in_(sorted(employee_names)))).all()
+        }
+
+        missing_clients = sorted(name for name in client_names if name not in client_map)
+        missing_products = sorted(name for name in product_names if name not in product_map)
+        missing_employees = sorted(name for name in employee_names if name not in employee_map)
+        if missing_clients:
+            raise ValueError(f"Clients not found: {', '.join(missing_clients)}")
+        if missing_products:
+            raise ValueError(f"Products not found: {', '.join(missing_products)}")
+        if missing_employees:
+            raise ValueError(f"Employees not found: {', '.join(missing_employees)}")
+
+        movement_id_set = set(movement_ids)
+        deleted_items = (
+            db.query(MovementItem)
+            .filter(MovementItem.movement_id.in_(movement_id_set))
+            .delete(synchronize_session=False)
+        )
+        deleted_salaries = (
+            db.query(MovementSalary)
+            .filter(MovementSalary.movement_id.in_(movement_id_set))
+            .delete(synchronize_session=False)
+        )
+        deleted_client_payments = (
+            db.query(MovementClientPayment)
+            .filter(MovementClientPayment.movement_id.in_(movement_id_set))
+            .delete(synchronize_session=False)
+        )
+
+        item_rows = []
+        salary_rows = []
+        client_payment_rows = []
+        for movement in movement_list:
+            for item in movement.items:
+                item_rows.append(
+                    {
+                        "movement_id": movement.external_id,
+                        "client_id": client_map[normalize_entity_name(item.client_name)],
+                        "product_id": product_map[normalize_entity_name(item.product_name)],
+                        "quantity": item.quantity,
+                        "unit_price": item.unit_price,
+                        "subtotal": item.subtotal,
+                    }
+                )
+            for salary in movement.salaries:
+                salary_rows.append(
+                    {
+                        "movement_id": movement.external_id,
+                        "employee_id": employee_map[normalize_entity_name(salary.employee_name)],
+                        "subtotal": salary.subtotal,
+                    }
+                )
+            for client_payment in movement.client_payments:
+                client_payment_rows.append(
+                    {
+                        "movement_id": movement.external_id,
+                        "client_id": client_map[normalize_entity_name(client_payment.client_name)],
+                        "subtotal": client_payment.subtotal,
+                    }
+                )
+
+        if item_rows:
+            db.execute(pg_insert(MovementItem).values(item_rows))
+        if salary_rows:
+            db.execute(pg_insert(MovementSalary).values(salary_rows))
+        if client_payment_rows:
+            db.execute(pg_insert(MovementClientPayment).values(client_payment_rows))
+
+        inserted_movements = len([movement_id for movement_id in movement_ids if movement_id not in existing_in_period])
+        updated_movements = len(movement_ids) - inserted_movements
+        SyncService._logger.info(
+            "sync_full period_id=%s movements=%s inserted=%s updated=%s items=%s salaries=%s client_payments=%s",
+            period_id,
+            len(movement_list),
+            inserted_movements,
+            updated_movements,
+            len(item_rows),
+            len(salary_rows),
+            len(client_payment_rows),
+        )
         return {
+            "period_id": period_id,
             "movements": {
-                "received": movements_received,
-                "inserted": movements_inserted,
-                "updated": movements_updated,
+                "received": len(movement_list),
+                "inserted": inserted_movements,
+                "updated": updated_movements,
                 "deleted": 0,
             },
             "movement_items": {
-                "received": items_received,
-                "inserted": items_inserted,
+                "received": total_items_received,
+                "inserted": len(item_rows),
                 "updated": 0,
-                "deleted": items_deleted,
+                "deleted": int(deleted_items or 0),
             },
             "movement_salaries": {
-                "received": salaries_received,
-                "inserted": salaries_inserted,
+                "received": total_salaries_received,
+                "inserted": len(salary_rows),
                 "updated": 0,
-                "deleted": salaries_deleted,
+                "deleted": int(deleted_salaries or 0),
             },
             "movement_client_payments": {
-                "received": client_payments_received,
-                "inserted": client_payments_inserted,
+                "received": total_client_payments_received,
+                "inserted": len(client_payment_rows),
                 "updated": 0,
-                "deleted": client_payments_deleted,
+                "deleted": int(deleted_client_payments or 0),
             },
         }
+
+    @staticmethod
+    def _ensure_period_and_get_movement_period_id(db: Session, period) -> int:
+        record = db.execute(
+            select(Period).where(Period.year == period.year, Period.month == period.month)
+        ).scalar_one_or_none()
+        if record is None:
+            period_start = getattr(period, "start_date", None) or date(period.year, period.month, 1)
+            if period.month == 12:
+                period_end = date(period.year, 12, 31)
+            else:
+                next_month_start = date(period.year, period.month + 1, 1)
+                period_end = date.fromordinal(next_month_start.toordinal() - 1)
+            record = Period(
+                year=period.year,
+                month=period.month,
+                name=getattr(period, "name", None) or f"{period.year:04d}-{period.month:02d}",
+                start_date=period_start,
+                end_date=getattr(period, "end_date", None) or period_end,
+            )
+            db.add(record)
+            db.flush()
+        return period.year * 100 + period.month
+
+    @staticmethod
+    def _validate_numeric_precision(value: Decimal, precision: int, scale: int, field_name: str) -> None:
+        quantized = value.as_tuple()
+        decimals = -quantized.exponent if quantized.exponent < 0 else 0
+        digits = len(quantized.digits)
+        integer_digits = digits - decimals
+        if decimals > scale:
+            raise ValueError(f"{field_name} has too many decimal places (max {scale})")
+        if integer_digits > (precision - scale):
+            raise ValueError(f"{field_name} exceeds numeric({precision},{scale})")
 
     @staticmethod
     def _get_movement_types(db: Session, movement_ids: set[UUID]) -> dict[UUID, MovementType]:

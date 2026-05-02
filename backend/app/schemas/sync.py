@@ -5,15 +5,15 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SyncPeriodPayload(BaseModel):
     year: int = Field(..., ge=1900, le=3000)
     month: int = Field(..., ge=1, le=12)
     name: str = Field(..., min_length=3, max_length=100)
-    start_date: date
-    end_date: date
+    start_date: date | None = None
+    end_date: date | None = None
 
     @field_validator("name")
     @classmethod
@@ -81,12 +81,24 @@ class SyncImportErrorItem(BaseModel):
 
 
 class SyncPricePayload(BaseModel):
-    client: str = Field(..., min_length=1, max_length=120)
-    product: str = Field(..., min_length=1, max_length=120)
+    client_name: str = Field(..., min_length=1, max_length=120)
+    product_name: str = Field(..., min_length=1, max_length=120)
     price: Decimal
     start_date: date
 
-    @field_validator("client", "product")
+    @model_validator(mode="before")
+    @classmethod
+    def map_legacy_keys(cls, data):
+        if not isinstance(data, dict):
+            return data
+        raw = dict(data)
+        if "client_name" not in raw and "client" in raw:
+            raw["client_name"] = raw["client"]
+        if "product_name" not in raw and "product" in raw:
+            raw["product_name"] = raw["product"]
+        return raw
+
+    @field_validator("client_name", "product_name")
     @classmethod
     def validate_required_names(cls, value: str) -> str:
         clean = value.strip()
@@ -143,12 +155,34 @@ class SyncPeriodResponse(BaseModel):
 
 
 class SyncClientsRequest(BaseModel):
-    names: list[str] = Field(default_factory=list)
+    clients: list["SyncClientPayload"] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_legacy_shape(cls, data):
+        if not isinstance(data, dict):
+            return data
+        raw = dict(data)
+        if "clients" not in raw and "names" in raw:
+            raw["clients"] = [{"name": str(name)} for name in (raw.get("names") or [])]
+        return raw
 
 
 class SyncClientsResponse(BaseModel):
     received: int
     created: int
+
+
+class SyncClientPayload(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("name cannot be empty")
+        return clean
 
 
 class SyncPricesRequest(BaseModel):
@@ -275,13 +309,49 @@ class SyncBatchResult(BaseModel):
 
 
 class SyncFullRequest(BaseModel):
-    movements: list[MovementSyncPayload] = Field(default_factory=list)
-    movement_items: list[MovementItemSyncPayload] = Field(default_factory=list)
-    movement_salaries: list[MovementSalarySyncPayload] = Field(default_factory=list)
-    movement_client_payments: list[MovementClientPaymentSyncPayload] = Field(default_factory=list)
+    period: SyncPeriodPayload
+    movements: list["SyncFullMovementPayload"] = Field(default_factory=list)
+
+
+class SyncFullMovementItemPayload(BaseModel):
+    client_name: str = Field(..., min_length=1, max_length=120)
+    product_name: str = Field(..., min_length=1, max_length=120)
+    quantity: Decimal
+    unit_price: Decimal
+    subtotal: Decimal
+
+
+class SyncFullMovementSalaryPayload(BaseModel):
+    employee_name: str = Field(..., min_length=1, max_length=120)
+    subtotal: Decimal
+
+
+class SyncFullMovementClientPaymentPayload(BaseModel):
+    client_name: str = Field(..., min_length=1, max_length=120)
+    subtotal: Decimal
+
+
+class SyncFullMovementPayload(BaseModel):
+    external_id: UUID
+    type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
+    date: date
+    amount: Decimal
+    description: str | None = Field(default=None, max_length=500)
+    items: list[SyncFullMovementItemPayload] = Field(default_factory=list)
+    salaries: list[SyncFullMovementSalaryPayload] = Field(default_factory=list)
+    client_payments: list[SyncFullMovementClientPaymentPayload] = Field(default_factory=list)
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        clean = value.strip()
+        return clean or None
 
 
 class SyncFullResponse(BaseModel):
+    period_id: int
     movements: SyncBatchResult
     movement_items: SyncBatchResult
     movement_salaries: SyncBatchResult

@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.schemas.sync import (
+    SyncClientsRequest,
+    SyncClientsResponse,
+    SyncPricesRequest,
+    SyncPricesResponse,
     SyncFullRequest,
     SyncFullExportResponse,
     SyncFullResponse,
@@ -18,6 +22,31 @@ from app.schemas.sync import (
 from app.services.sync_service import SyncService
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+
+
+@router.post("/clients", response_model=SyncClientsResponse, status_code=status.HTTP_200_OK)
+def sync_clients(data: SyncClientsRequest, db: Session = Depends(get_db)) -> SyncClientsResponse:
+    try:
+        names = [item.name for item in data.clients]
+        with db.begin():
+            received, created, _ = SyncService.ensure_clients(db=db, names=names)
+        return SyncClientsResponse(received=received, created=created)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Integrity error syncing clients") from exc
+
+
+@router.post("/prices", response_model=SyncPricesResponse, status_code=status.HTTP_200_OK)
+def sync_prices(data: SyncPricesRequest, db: Session = Depends(get_db)) -> SyncPricesResponse:
+    try:
+        with db.begin():
+            received, upserted = SyncService.upsert_prices(db=db, prices=data.prices)
+        return SyncPricesResponse(received=received, upserted=upserted)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Integrity error syncing prices") from exc
 
 
 @router.post("/movements", response_model=SyncBatchResult, status_code=status.HTTP_200_OK)
@@ -72,13 +101,7 @@ def sync_movement_client_payments(data: list[MovementClientPaymentSyncPayload], 
 def sync_full(data: SyncFullRequest, db: Session = Depends(get_db)) -> SyncFullResponse:
     try:
         with db.begin():
-            result = SyncService.sync_full(
-                db=db,
-                movements=data.movements,
-                items=data.movement_items,
-                salaries=data.movement_salaries,
-                client_payments=data.movement_client_payments,
-            )
+            result = SyncService.sync_full(db=db, period=data.period, movements=data.movements)
         return SyncFullResponse(**result)
     except HTTPException:
         raise
