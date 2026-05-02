@@ -76,14 +76,11 @@ def get_signed_amount(movement: Movement) -> Decimal:
 
 def _build_movements_filters(
     *,
-    period_id: int | None,
     date_from: date | None,
     date_to: date | None,
     movement_type: MovementType | None,
 ) -> list:
     filters = []
-    if period_id is not None:
-        filters.append(Movement.period_id == period_id)
     if date_from is not None:
         filters.append(Movement.date >= date_from)
     if date_to is not None:
@@ -95,7 +92,6 @@ def _build_movements_filters(
 
 def _build_movements_query(
     *,
-    period_id: int | None,
     date_from: date | None,
     date_to: date | None,
     movement_type: MovementType | None,
@@ -115,7 +111,6 @@ def _build_movements_query(
         .offset(offset)
     )
     return stmt.where(*_build_movements_filters(
-        period_id=period_id,
         date_from=date_from,
         date_to=date_to,
         movement_type=movement_type,
@@ -124,7 +119,6 @@ def _build_movements_query(
 
 @router.get("/", response_model=list[MovementOut])
 def get_movements(
-    period_id: int | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     type: MovementType | None = Query(default=None),
@@ -134,7 +128,6 @@ def get_movements(
 ) -> list[MovementOut]:
     movements = db.scalars(
         _build_movements_query(
-            period_id=period_id,
             date_from=date_from,
             date_to=date_to,
             movement_type=type,
@@ -158,7 +151,6 @@ def create_movement(payload: MovementCreate, db: Session = Depends(get_db)) -> M
 
 @router.get("/flat", response_model=list[MovementFlatOut])
 def get_movements_flat(
-    period_id: int | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     type: MovementType | None = Query(default=None),
@@ -168,7 +160,6 @@ def get_movements_flat(
 ) -> list[MovementFlatOut]:
     movements = db.scalars(
         _build_movements_query(
-            period_id=period_id,
             date_from=date_from,
             date_to=date_to,
             movement_type=type,
@@ -273,7 +264,6 @@ def get_entities(db: Session = Depends(get_db)) -> EntitiesOut:
 
 @router.get("/balance", response_model=BalanceOut)
 def get_balance(
-    period_id: int | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     type: MovementType | None = Query(default=None),
@@ -285,7 +275,6 @@ def get_balance(
     )
     stmt = select(func.coalesce(func.sum(signed_amount), 0)).where(
         *_build_movements_filters(
-            period_id=period_id,
             date_from=date_from,
             date_to=date_to,
             movement_type=type,

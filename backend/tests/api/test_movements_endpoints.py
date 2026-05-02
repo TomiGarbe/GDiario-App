@@ -131,14 +131,14 @@ def test_movements_filters_and_pagination(client):
 
     filtered = client.get(
         "/api/movements/",
-        params={"period_id": 7, "date_from": "2026-02-02", "date_to": "2026-02-03"},
+        params={"date_from": "2026-02-02", "date_to": "2026-02-03"},
     )
     assert filtered.status_code == 200
     rows = filtered.json()
     assert len(rows) == 2
     assert [row["date"] for row in rows] == ["2026-02-02", "2026-02-03"]
 
-    paged = client.get("/api/movements/", params={"period_id": 7, "limit": 2, "offset": 1})
+    paged = client.get("/api/movements/", params={"limit": 2, "offset": 1})
     assert paged.status_code == 200
     page_rows = paged.json()
     assert len(page_rows) == 2
