@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from datetime import date, datetime
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -13,18 +14,14 @@ from app.models.movement_item import MovementItem
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 DELETE_MOVEMENT_SHEETS = [
     "MOVEMENTS",
-    "GRASA",
-    "HUESOS",
     "CUENTAS",
     "SUELDOS",
     "GASTOS",
 ]
 MOVEMENT_ID_COLUMN_BY_SHEET = {
     "MOVEMENTS": 0,
-    "GRASA": 6,
-    "HUESOS": 6,
-    "CUENTAS": 3,
-    "SUELDOS": 3,
+    "CUENTAS": 9,
+    "SUELDOS": 5,
     "GASTOS": 3,
 }
 
@@ -112,21 +109,14 @@ def append_items_to_product_sheets(sheet_id: str, movement: Movement) -> None:
         if product_name not in {"GRASA", "HUESOS"}:
             continue
 
-        values = [[
-            str(movement.date),
-            item.client.name,
-            movement.type.value,
-            float(item.quantity),
-            float(item.unit_price),
-            float(item.subtotal),
-            str(movement.id),
-        ]]
-        service.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range=f"{product_name}!A:G",
-            valueInputOption="USER_ENTERED",
-            body={"values": values},
-        ).execute()
+        _upsert_product_quantity(
+            service=service,
+            spreadsheet_id=sheet_id,
+            sheet_name=product_name,
+            movement_date=movement.date,
+            client_name=item.client.name,
+            quantity=float(item.quantity),
+        )
 
 
 def append_client_payments(sheet_id: str, payments: list[MovementClientPayment]) -> None:
@@ -165,12 +155,18 @@ def append_client_payments_to_cuentas(sheet_id: str, movement: Movement) -> None
         values = [[
             str(movement.date),
             payment.client.name,
+            "Pago de Fabian",
+            "",
+            "",
+            "",
+            "",
+            "",
             float(payment.subtotal),
             str(movement.id),
         ]]
         service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
-            range="CUENTAS!A:D",
+            range="CUENTAS!A:J",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
@@ -185,12 +181,14 @@ def append_salaries_to_sheet(sheet_id: str, movement: Movement) -> None:
         values = [[
             str(movement.date),
             salary.employee.name,
+            "Adelanto",
+            "Adelanto",
             float(salary.subtotal),
             str(movement.id),
         ]]
         service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
-            range="SUELDOS!A:D",
+            range="SUELDOS!A:F",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
@@ -318,3 +316,108 @@ def test_sheets(sheet_id: str) -> None:
     except Exception as e:
         print("GOOGLE ERROR:", str(e))
         raise
+
+
+def _normalize_date_key(value) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "T" in text:
+        text = text.split("T", 1)[0]
+    if " " in text:
+        text = text.split(" ", 1)[0]
+    return text
+
+
+def _to_col_letter(col_index_zero_based: int) -> str:
+    n = col_index_zero_based + 1
+    letters: list[str] = []
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        letters.append(chr(65 + rem))
+    return "".join(reversed(letters))
+
+
+def _parse_float(value) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace(",", ".")
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def _upsert_product_quantity(
+    service,
+    spreadsheet_id: str,
+    sheet_name: str,
+    movement_date,
+    client_name: str,
+    quantity: float,
+) -> None:
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"{sheet_name}!A:ZZ",
+    ).execute()
+    values = result.get("values", [])
+    if not values:
+        values = [[]]
+
+    header = values[0] if values else []
+    target_date = _normalize_date_key(movement_date)
+
+    col_index = None
+    for i, cell in enumerate(header):
+        if _normalize_date_key(cell) == target_date:
+            col_index = i
+            break
+    if col_index is None:
+        col_index = len(header)
+        col_letter = _to_col_letter(col_index)
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"{sheet_name}!{col_letter}1",
+            valueInputOption="USER_ENTERED",
+            body={"values": [[target_date]]},
+        ).execute()
+
+    rows = values[1:] if len(values) > 1 else []
+    target_client = str(client_name or "").strip().lower()
+    row_index = None
+    for i, row in enumerate(rows, start=2):
+        cell = str(row[0]).strip().lower() if row else ""
+        if cell == target_client:
+            row_index = i
+            break
+    if row_index is None:
+        row_index = len(values) + 1
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"{sheet_name}!A{row_index}",
+            valueInputOption="USER_ENTERED",
+            body={"values": [[client_name]]},
+        ).execute()
+
+    col_letter = _to_col_letter(col_index)
+    cell_result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"{sheet_name}!{col_letter}{row_index}",
+    ).execute()
+    current_raw = cell_result.get("values", [[]])[0][0] if cell_result.get("values") else ""
+    new_value = _parse_float(current_raw) + float(quantity)
+
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"{sheet_name}!{col_letter}{row_index}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [[new_value]]},
+    ).execute()
