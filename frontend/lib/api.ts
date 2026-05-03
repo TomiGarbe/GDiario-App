@@ -42,10 +42,12 @@ const getErrorMessage = (status: number, payload?: ApiErrorPayload) => {
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, headers, signal } = options;
+  const url = buildUrl(path);
+  const requestBody = body !== undefined ? JSON.stringify(body) : undefined;
 
   let response: Response;
   try {
-    response = await fetch(buildUrl(path), {
+    response = await fetch(url, {
       method,
       signal,
       headers: {
@@ -53,7 +55,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
         "Content-Type": "application/json",
         ...headers,
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: requestBody,
     });
   } catch {
     throw new ApiError("Network error: could not connect to server", 0);
@@ -61,16 +63,19 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   if (response.status === 204) return undefined as T;
 
-  let payload: unknown;
+  const text = await response.text();
+  console.log("RAW RESPONSE:", text);
+
+  let payload: unknown = undefined;
   try {
-    payload = await response.json();
+    payload = text ? JSON.parse(text) : undefined;
   } catch {
     payload = undefined;
   }
 
   if (!response.ok) {
     const errorPayload = payload as ApiErrorPayload | undefined;
-    throw new ApiError(getErrorMessage(response.status, errorPayload), response.status, errorPayload);
+    throw new ApiError(text || getErrorMessage(response.status, errorPayload), response.status, errorPayload);
   }
 
   return payload as T;

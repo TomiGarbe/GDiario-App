@@ -396,10 +396,17 @@ function request(path, opts) {
 
     return response.text().then(function(raw) {
       var txt = String(raw == null ? '' : raw).trim();
-      var payload = txt ? JSON.parse(txt) : null;
+      console.log('RAW RESPONSE:', txt);
+
+      var payload = null;
+      try {
+        payload = txt ? JSON.parse(txt) : null;
+      } catch (_) {
+        payload = null;
+      }
 
       if (!response.ok) {
-        throw new Error(extractErrorMessage(response, payload));
+        throw new Error(txt || extractErrorMessage(response, payload));
       }
 
       console.log('Response:', payload);

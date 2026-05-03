@@ -45,24 +45,30 @@ class MovementService:
 
     @staticmethod
     def create_movement(db: Session, data: MovementCreate) -> Movement:
-        movement_type = MovementType(data.type)
-        items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
+        payload = data.model_dump() if hasattr(data, "model_dump") else data.dict()
+        print("PAYLOAD:", payload)
+        try:
+            movement_type = MovementType(data.type)
+            items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
 
-        movement = Movement(
-            period_id=data.period_id,
-            date=data.date,
-            type=movement_type,
-            amount=amount,
-            description=data.description,
-            source="app",
-            updated_at=datetime.now(timezone.utc),
-        )
-        db.add(movement)
-        db.flush()
+            movement = Movement(
+                period_id=data.period_id,
+                date=data.date,
+                type=movement_type,
+                amount=amount,
+                description=data.description,
+                source="app",
+                updated_at=datetime.now(timezone.utc),
+            )
+            db.add(movement)
+            db.flush()
 
-        MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
-        db.commit()
-        return MovementService.get_movement_by_id(db, movement.id)
+            MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
+            db.commit()
+            return MovementService.get_movement_by_id(db, movement.id)
+        except Exception as e:
+            print("ERROR:", str(e))
+            raise
 
     @staticmethod
     def update_movement(db: Session, movement_id: UUID, data: MovementUpdate) -> Movement:
