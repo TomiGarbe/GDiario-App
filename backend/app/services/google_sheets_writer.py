@@ -11,6 +11,14 @@ from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
 
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
+DELETE_MOVEMENT_SHEETS = [
+    "MOVEMENTS",
+    "GRASA",
+    "HUESOS",
+    "CUENTAS",
+    "SUELDOS",
+    "GASTOS",
+]
 
 
 @lru_cache(maxsize=1)
@@ -109,6 +117,66 @@ def append_client_payments(sheet_id: str, payments: list[MovementClientPayment])
     except Exception as e:
         print("GOOGLE ERROR:", str(e))
         raise
+
+
+def get_sheet_gid(service, sheet_id: str, sheet_name: str) -> int:
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    for sheet in meta.get("sheets", []):
+        props = sheet.get("properties", {})
+        if props.get("title") == sheet_name:
+            return int(props["sheetId"])
+    raise Exception(f"Sheet not found: {sheet_name}")
+
+
+def find_rows_by_movement_id(service, sheet_id: str, sheet_name: str, movement_id: str) -> list[int]:
+    result = service.spreadsheets().values().get(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!A:Z",
+    ).execute()
+    values = result.get("values", [])
+    target = str(movement_id).strip()
+    rows: list[int] = []
+    for i, row in enumerate(values):
+        if not row:
+            continue
+        if str(row[-1]).strip() == target:
+            rows.append(i + 1)  # Sheets row index starts at 1
+    return rows
+
+
+def delete_rows(service, sheet_id: str, sheet_name: str, row_indexes: list[int]) -> None:
+    if not row_indexes:
+        return
+
+    gid = get_sheet_gid(service, sheet_id, sheet_name)
+    requests = []
+    for row in sorted(row_indexes, reverse=True):
+        requests.append(
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": gid,
+                        "dimension": "ROWS",
+                        "startIndex": row - 1,
+                        "endIndex": row,
+                    }
+                }
+            }
+        )
+
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=sheet_id,
+        body={"requests": requests},
+    ).execute()
+
+
+def delete_movement_from_sheets(sheet_id: str, movement_id: str) -> None:
+    service = get_sheets_service()
+    print(f"[SHEETS DELETE] movement_id={movement_id}")
+
+    for sheet_name in DELETE_MOVEMENT_SHEETS:
+        rows = find_rows_by_movement_id(service, sheet_id, sheet_name, movement_id)
+        delete_rows(service, sheet_id, sheet_name, rows)
 
 
 def test_sheets(sheet_id: str) -> None:

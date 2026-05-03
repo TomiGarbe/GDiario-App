@@ -23,6 +23,7 @@ from app.services.google_sheets_writer import (
     append_client_payments,
     append_items,
     append_movement,
+    delete_movement_from_sheets,
     test_sheets,
 )
 from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
@@ -170,10 +171,22 @@ class MovementService:
         movement = db.scalar(select(Movement).where(Movement.id == movement_id, Movement.deleted_at.is_(None)))
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
+        period_id = movement.period_id
         movement.deleted_at = datetime.now(timezone.utc)
         movement.updated_at = movement.deleted_at
         movement.source = "app"
         db.commit()
+
+        sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
+        if sheet_id:
+            try:
+                delete_movement_from_sheets(sheet_id, str(movement_id))
+            except Exception:
+                logger.exception(
+                    "Failed to delete movement from Google Sheets. movement_id=%s period_id=%s",
+                    movement_id,
+                    period_id,
+                )
 
     @staticmethod
     def replace_details(
