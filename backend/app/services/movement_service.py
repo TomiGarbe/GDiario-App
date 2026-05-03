@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import logging
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -14,12 +15,19 @@ from app.models.movement import Movement, MovementType
 from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
 from app.models.movement_salary import MovementSalary
+from app.models.period import Period
 from app.models.product import Product
 from app.schemas.movement import MovementCreate, MovementUpdate
+from app.services.google_sheets_writer import (
+    append_client_payments,
+    append_items,
+    append_movement,
+)
 from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
 from app.services.validation_service import ValidationService
 
 TWOPLACES = Decimal("0.0001")
+logger = logging.getLogger(__name__)
 
 
 class MovementNotFoundError(Exception):
@@ -45,30 +53,39 @@ class MovementService:
 
     @staticmethod
     def create_movement(db: Session, data: MovementCreate) -> Movement:
-        payload = data.model_dump() if hasattr(data, "model_dump") else data.dict()
-        print("PAYLOAD:", payload)
-        try:
-            movement_type = MovementType(data.type)
-            items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
+        movement_type = MovementType(data.type)
+        items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
 
-            movement = Movement(
-                period_id=data.period_id,
-                date=data.date,
-                type=movement_type,
-                amount=amount,
-                description=data.description,
-                source="app",
-                updated_at=datetime.now(timezone.utc),
-            )
-            db.add(movement)
-            db.flush()
+        movement = Movement(
+            period_id=data.period_id,
+            date=data.date,
+            type=movement_type,
+            amount=amount,
+            description=data.description,
+            source="app",
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(movement)
+        db.flush()
 
-            MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
-            db.commit()
-            return MovementService.get_movement_by_id(db, movement.id)
-        except Exception as e:
-            print("ERROR:", str(e))
-            raise
+        MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
+        db.commit()
+        movement = MovementService.get_movement_by_id(db, movement.id)
+
+        sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
+        if sheet_id:
+            try:
+                append_movement(sheet_id, movement)
+                append_items(sheet_id, movement.items)
+                append_client_payments(sheet_id, movement.client_payments)
+            except Exception:
+                logger.exception(
+                    "Failed to append movement to Google Sheets. movement_id=%s period_id=%s",
+                    movement.id,
+                    movement.period_id,
+                )
+
+        return movement
 
     @staticmethod
     def update_movement(db: Session, movement_id: UUID, data: MovementUpdate) -> Movement:
@@ -227,3 +244,17 @@ class MovementService:
         total_haber_dec = Decimal(total_haber).quantize(TWOPLACES)
         balance = (total_haber_dec - total_debe_dec).quantize(TWOPLACES)
         return total_debe_dec, total_haber_dec, balance
+
+    @staticmethod
+    def _get_sheet_id_for_period_id(db: Session, period_id: int) -> str | None:
+        year = period_id // 100
+        month = period_id % 100
+        period = db.scalar(
+            select(Period).where(
+                Period.year == year,
+                Period.month == month,
+            )
+        )
+        if period is None:
+            return None
+        return (period.sheet_id or "").strip() or None
