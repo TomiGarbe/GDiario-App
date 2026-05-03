@@ -796,7 +796,10 @@ function calcular(card, calcId) {
           if (idxSoloMonto !== -1 && partes[idxSoloMonto].precio > 0) {
             var kgSoloMonto = montoManual / partes[idxSoloMonto].precio;
             setSugerenciaKgItem(partes[idxSoloMonto].row, kgSoloMonto);
-            sug.textContent = 'Sugerencia de kg para ' + partes[idxSoloMonto].producto + ': ' + formatDecimal(kgSoloMonto);
+            var productoUiSolo = typeof capitalizeFirst === 'function'
+              ? capitalizeFirst(partes[idxSoloMonto].producto)
+              : partes[idxSoloMonto].producto;
+            sug.textContent = 'Sugerencia de kg para ' + productoUiSolo + ': ' + formatDecimal(kgSoloMonto);
           } else {
             sug.textContent = 'No hay precio valido para sugerir kg';
           }
@@ -810,7 +813,10 @@ function calcular(card, calcId) {
             if (idxVacio !== -1 && partes[idxVacio].precio > 0) {
               var kgFaltante = faltante / partes[idxVacio].precio;
               setSugerenciaKgItem(partes[idxVacio].row, kgFaltante);
-              sug.textContent = 'Falta cubrir $ ' + formatDecimal(faltante) + '. Sugerencia: ' + formatDecimal(kgFaltante) + ' kg en ' + partes[idxVacio].producto;
+              var productoUiFaltante = typeof capitalizeFirst === 'function'
+                ? capitalizeFirst(partes[idxVacio].producto)
+                : partes[idxVacio].producto;
+              sug.textContent = 'Falta cubrir $ ' + formatDecimal(faltante) + '. Sugerencia: ' + formatDecimal(kgFaltante) + ' kg en ' + productoUiFaltante;
             } else {
               sug.textContent = 'Falta cubrir $ ' + formatDecimal(faltante);
             }

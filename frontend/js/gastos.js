@@ -1,5 +1,5 @@
 var TIPOS_GASTO = ['Comida', 'Gasoil', 'Ayudantes', 'Otro'];
-var EMPLEADOS_AYUDANTES = ['TOMAS', 'KEVIN'];
+var EMPLEADOS_AYUDANTES = ['Tomas', 'Kevin'];
 var AYUDANTE_SELECT_SEQ = 0;
 var ICONO_CERRAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
 

@@ -53,6 +53,13 @@ function hoyISO() {
   return hoyArgentinaISO();
 }
 
+function capitalizeFirst(text) {
+  if (!text) return '';
+  var value = String(text).trim();
+  if (!value) return '';
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 function sanitizeDecimalText(value) {
   var raw = String(value == null ? '' : value);
   var clean = '';
@@ -264,6 +271,7 @@ function ejecutarConLoading(task, opts) {
 window.toast = toast;
 window.hoyArgentinaISO = hoyArgentinaISO;
 window.hoyISO = hoyISO;
+window.capitalizeFirst = capitalizeFirst;
 window.sanitizeDecimalText = sanitizeDecimalText;
 window.normalizarInputDecimal = normalizarInputDecimal;
 window.setupDecimalInputValidation = setupDecimalInputValidation;

@@ -202,17 +202,20 @@ function puedeEditarMovimiento(mov) {
 
 function detalleMovimiento(mov) {
   var partes = [];
+  var formatNombreUi = typeof capitalizeFirst === 'function'
+    ? capitalizeFirst
+    : function(v) { return String(v == null ? '' : v).trim(); };
 
   if (mov) {
-    if (mov.cliente) partes.push('Cliente: ' + mov.cliente);
-    if (mov.producto && toNumber(mov.kg) > 0) partes.push('Producto: ' + mov.producto + ' ' + formatearNumeroMov(mov.kg) + ' kg');
+    if (mov.cliente) partes.push('Cliente: ' + formatNombreUi(mov.cliente));
+    if (mov.producto && toNumber(mov.kg) > 0) partes.push('Producto: ' + formatNombreUi(mov.producto) + ' ' + formatearNumeroMov(mov.kg) + ' kg');
     else if (mov.datos) {
       if (Array.isArray(mov.datos.productos) && mov.datos.productos.length > 1) {
         var productosTxt = mov.datos.productos.map(function(item) {
           var prod = String(item && item.producto || '').trim();
           var kg = toNumber(item && item.kg);
           if (!prod || !(kg > 0)) return '';
-          return prod + ' ' + formatearNumeroMov(kg) + ' kg';
+          return formatNombreUi(prod) + ' ' + formatearNumeroMov(kg) + ' kg';
         }).filter(Boolean).join(' | ');
 
         if (productosTxt) partes.push('Productos: ' + productosTxt);
@@ -1269,7 +1272,9 @@ function setOpcionesSelect(selectEl, opciones, selected) {
   data.forEach(function(op) {
     var opt = document.createElement('option');
     opt.value = op;
-    opt.textContent = op;
+    opt.textContent = typeof capitalizeFirst === 'function'
+      ? capitalizeFirst(op)
+      : op;
     selectEl.appendChild(opt);
   });
 

@@ -143,7 +143,9 @@ function csSyncVisual(cfg) {
   var existe = opciones.indexOf(selected) !== -1;
 
   if (existe && selected !== '') {
-    disp.textContent = selected;
+    disp.textContent = typeof capitalizeFirst === 'function'
+      ? capitalizeFirst(selected)
+      : selected;
     disp.className = 'cs-val';
   } else {
     disp.textContent = cfg.placeholder;
@@ -268,7 +270,9 @@ function csRenderCustom(id, filtro) {
 
   data.forEach(function(nombre) {
     var li = document.createElement('li');
-    li.textContent = nombre;
+    li.textContent = typeof capitalizeFirst === 'function'
+      ? capitalizeFirst(nombre)
+      : nombre;
 
     if (String(cfg.value || '') === nombre) li.classList.add('cs-selected');
 
