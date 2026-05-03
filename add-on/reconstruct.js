@@ -252,24 +252,38 @@ function procesarGastos(ss) {
   if (!sheet) return { movements: [], movement_items: [], movement_salaries: [], movement_client_payments: [] };
 
   const data = sheet.getDataRange().getValues();
+  const headers = data[0] || [];
+  const isFromAppIndex = headers.findIndex((h) =>
+    _asCleanString(h).toLowerCase() === "is_from_app"
+  );
+
+  if (isFromAppIndex === -1) {
+    Logger.log("GASTOS: columna is_from_app no encontrada. No se procesan gastos.");
+    return { movements: [], movement_items: [], movement_salaries: [], movement_client_payments: [] };
+  }
+
+  const gastosValidos = data
+    .slice(1)
+    .map((row, idx) => ({ row, rowNumber: idx + 2 }))
+    .filter(({ row }) => _isTrue(row[isFromAppIndex]));
+
   const movements = [];
   let processed = 0;
 
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    if (isEmptyRow(row)) continue;
-    if (isSummaryRow(row)) continue;
+  gastosValidos.forEach(({ row, rowNumber }) => {
+    if (isEmptyRow(row)) return;
+    if (isSummaryRow(row)) return;
 
     const date = row[0];
     const tipo = _asCleanString(row[1]);
     const amount = parseNumber(row[2]);
 
-    if (!isValidMovementRow({ date, amount })) continue;
+    if (!isValidMovementRow({ date, amount })) return;
 
     let id = _asCleanString(row[3]);
     if (!_isUuidV4(id)) {
       id = Utilities.getUuid();
-      sheet.getRange(i + 1, 4).setValue(id);
+      sheet.getRange(rowNumber, 4).setValue(id);
     }
 
     movements.push({
@@ -281,7 +295,7 @@ function procesarGastos(ss) {
     });
 
     processed++;
-  }
+  });
 
   Logger.log("Gastos procesados: " + processed);
   return { movements, movement_items: [], movement_salaries: [], movement_client_payments: [] };
@@ -512,19 +526,44 @@ function getPrice(args) {
   const prices = pricesMap[key];
   if (!prices || prices.length === 0) return null;
 
-  let winner = null;
-  prices.forEach((row) => {
-    if (row.start_date > date) return;
-    if (!winner || row.start_date > winner.start_date) {
-      winner = row;
-    }
-  });
+  const priceRow = _getPriceForDate(prices, date);
+  if (!priceRow) return null;
 
-  return winner ? winner.price : null;
+  Logger.log("MOV DATE: " + _toDateKey(date));
+  Logger.log("PRICE USED: " + _toDateKey(priceRow.start_date) + " " + priceRow.price);
+
+  return priceRow.price;
+}
+
+function _getPriceForDate(prices, movementDate) {
+  if (!Array.isArray(prices) || prices.length === 0 || !_isValidDate(movementDate)) return null;
+
+  const movementDateKey = _toDateKey(movementDate);
+  let validPrice = null;
+
+  for (let i = 0; i < prices.length; i++) {
+    const row = prices[i];
+    if (!row || !_isValidDate(row.start_date)) continue;
+    const startDateKey = _toDateKey(row.start_date);
+
+    if (startDateKey <= movementDateKey) {
+      validPrice = row;
+    } else {
+      break;
+    }
+  }
+
+  return validPrice;
 }
 
 function _buildPriceKey(clientName, productName) {
   return `${String(clientName || "").trim().toLowerCase()}|${String(productName || "").trim().toLowerCase()}`;
+}
+
+function _isTrue(value) {
+  if (value === true) return true;
+  if (typeof value === "string") return value.trim().toLowerCase() === "true";
+  return false;
 }
 
 function _esClienteSinMontoReconstruct(nombre) {
@@ -610,7 +649,6 @@ function _distribuirMovimientosLegacyNoUsar() {
 
     switch (type) {
       case "Entrega":
-      case "Entrega de dinero":
       case "entrega":
       case "entrega_dinero":
         return;

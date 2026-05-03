@@ -267,7 +267,7 @@ def get_balance(db: Session = Depends(get_db)) -> BalanceOut:
     movements = db.query(Movement).all()
 
     balance = Decimal("0")
-    sum_types = {"entrega_dinero", "pago_cliente", "venta"}
+    sum_types = {"entrega_dinero", "venta"}
 
     for m in movements:
         amount = Decimal(m.amount)
