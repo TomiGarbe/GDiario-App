@@ -150,6 +150,9 @@ def get_movements(
 
 @router.post("/", response_model=MovementOut, status_code=status.HTTP_201_CREATED)
 def create_movement(payload: MovementCreate, db: Session = Depends(get_db)) -> MovementOut:
+    movement_data = payload.model_dump()
+    print("CREATE MOVEMENT CALLED")
+    print("DATA:", movement_data)
     try:
         movement = MovementService.create_movement(db, payload)
         if movement.type == MovementType.PAGO_CLIENTE:
@@ -163,6 +166,15 @@ def create_movement(payload: MovementCreate, db: Session = Depends(get_db)) -> M
     except HTTPException:
         db.rollback()
         raise
+
+
+@router.post("/debug/test-sheets")
+def debug_test_sheets(
+    period_id: int = Query(..., ge=190001, le=299912),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    result = MovementService.test_sheets_for_period(db, period_id)
+    return {"result": result}
 
 
 @router.get("/flat", response_model=list[MovementFlatOut])

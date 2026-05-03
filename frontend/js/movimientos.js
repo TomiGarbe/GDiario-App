@@ -1168,6 +1168,7 @@ function guardar() {
 
   ejecutarConLoading(function() {
     console.log('ENVIANDO REQUEST...');
+    console.log("ENVIANDO MOVIMIENTO:", payload);
     return api('guardarMovimiento', payload);
   }, {
     boton: btnGuardar,

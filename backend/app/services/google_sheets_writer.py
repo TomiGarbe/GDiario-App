@@ -17,6 +17,7 @@ SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 def get_sheets_service():
     settings = get_settings()
     credentials_file = settings.google_service_account_file
+    print("USANDO CREDENTIALS:", credentials_file)
     if not credentials_file:
         raise RuntimeError(
             "GOOGLE_SERVICE_ACCOUNT_FILE is not set. Define it in backend/.env"
@@ -38,13 +39,19 @@ def append_movement(sheet_id: str, movement: Movement) -> None:
         float(movement.amount),
         movement.description or "",
     ]]
-
-    service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
-        range="MOVEMENTS!A:F",
-        valueInputOption="USER_ENTERED",
-        body={"values": values},
-    ).execute()
+    print("SHEET_ID:", sheet_id)
+    print("APPEND MOVEMENT:", movement.id)
+    try:
+        result = service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range="MOVEMENTS!A:F",
+            valueInputOption="USER_ENTERED",
+            body={"values": values},
+        ).execute()
+        print("GOOGLE RESPONSE:", result)
+    except Exception as e:
+        print("GOOGLE ERROR:", str(e))
+        raise
 
 
 def append_items(sheet_id: str, items: list[MovementItem]) -> None:
@@ -64,12 +71,17 @@ def append_items(sheet_id: str, items: list[MovementItem]) -> None:
         for item in items
     ]
 
-    service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
-        range="ITEMS!A:F",
-        valueInputOption="USER_ENTERED",
-        body={"values": values},
-    ).execute()
+    try:
+        result = service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range="ITEMS!A:F",
+            valueInputOption="USER_ENTERED",
+            body={"values": values},
+        ).execute()
+        print("GOOGLE RESPONSE:", result)
+    except Exception as e:
+        print("GOOGLE ERROR:", str(e))
+        raise
 
 
 def append_client_payments(sheet_id: str, payments: list[MovementClientPayment]) -> None:
@@ -86,9 +98,31 @@ def append_client_payments(sheet_id: str, payments: list[MovementClientPayment])
         for payment in payments
     ]
 
-    service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
-        range="CLIENT_PAYMENTS!A:C",
-        valueInputOption="USER_ENTERED",
-        body={"values": values},
-    ).execute()
+    try:
+        result = service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range="CLIENT_PAYMENTS!A:C",
+            valueInputOption="USER_ENTERED",
+            body={"values": values},
+        ).execute()
+        print("GOOGLE RESPONSE:", result)
+    except Exception as e:
+        print("GOOGLE ERROR:", str(e))
+        raise
+
+
+def test_sheets(sheet_id: str) -> None:
+    service = get_sheets_service()
+    print("TEST SHEETS SHEET_ID:", sheet_id)
+    test_values = [["TEST", "debug", "manual"]]
+    try:
+        result = service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range="MOVEMENTS!A:C",
+            valueInputOption="RAW",
+            body={"values": test_values},
+        ).execute()
+        print("GOOGLE RESPONSE:", result)
+    except Exception as e:
+        print("GOOGLE ERROR:", str(e))
+        raise

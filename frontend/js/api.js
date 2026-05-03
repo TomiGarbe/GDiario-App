@@ -446,12 +446,18 @@ function request(path, opts) {
     authHeaders.Authorization = 'Bearer ' + token;
   }
 
+  var headers = Object.assign({
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+  }, authHeaders, options.headers || {});
+  console.log("TOKEN:", localStorage.getItem('token'));
+  console.log("HEADERS:", headers);
+  console.log("REQUEST PATH:", path);
+  console.log("REQUEST URL:", url);
+
   return fetch(url, {
     method: method,
-    headers: Object.assign({
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    }, authHeaders, options.headers || {}),
+    headers: headers,
     body: bodyPayload !== undefined ? JSON.stringify(bodyPayload) : undefined
   }).then(function(response) {
     if (response.status === 401) {
@@ -464,6 +470,7 @@ function request(path, opts) {
     return response.text().then(function(raw) {
       var txt = String(raw == null ? '' : raw).trim();
       console.log('RESPONSE STATUS:', response.status);
+      console.log('RESPONSE OK:', response.ok);
       console.log('RESPONSE BODY:', txt);
       console.log('RAW RESPONSE:', txt);
 

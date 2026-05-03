@@ -22,6 +22,7 @@ from app.services.google_sheets_writer import (
     append_client_payments,
     append_items,
     append_movement,
+    test_sheets,
 )
 from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
 from app.services.validation_service import ValidationService
@@ -71,8 +72,13 @@ class MovementService:
         MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
         db.commit()
         movement = MovementService.get_movement_by_id(db, movement.id)
+        print("MOVEMENT CREATED:", movement.id)
+        print("ITEMS:", movement.items)
+        print("CLIENT PAYMENTS:", movement.client_payments)
 
         sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
+        print("SHEET_ID:", sheet_id)
+        print("APPEND MOVEMENT:", movement.id)
         if sheet_id:
             try:
                 append_movement(sheet_id, movement)
@@ -86,6 +92,14 @@ class MovementService:
                 )
 
         return movement
+
+    @staticmethod
+    def test_sheets_for_period(db: Session, period_id: int) -> str:
+        sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
+        if not sheet_id:
+            return f"ERROR: period_id={period_id} has no sheet_id"
+        test_sheets(sheet_id)
+        return f"OK: test_sheets executed for period_id={period_id} sheet_id={sheet_id}"
 
     @staticmethod
     def update_movement(db: Session, movement_id: UUID, data: MovementUpdate) -> Movement:
