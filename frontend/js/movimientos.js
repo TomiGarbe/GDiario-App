@@ -868,6 +868,20 @@ function redondearNumero(n) {
   return Math.round(Number(n) * 1000000) / 1000000;
 }
 
+function parsePrecio(value) {
+  if (value == null) return 0;
+
+  var v = String(value).trim();
+  if (v === '') return 0;
+
+  v = v.replace(/\$/g, '').replace(/\./g, '').replace(',', '.');
+
+  var num = Number(v);
+  if (!Number.isFinite(num) || isNaN(num)) return 0;
+
+  return num < 0 ? 0 : num;
+}
+
 function construirPayloadMovimientosDesdeFormulario() {
   var fecha = document.getElementById('fecha').value;
   if (!fecha) {
@@ -1008,7 +1022,8 @@ function construirPayloadMovimientosDesdeFormulario() {
 
       productosCompra.push({
         producto: producto,
-        kg: kgFinal
+        kg: kgFinal,
+        unit_price: 0
       });
     }
 
@@ -1026,7 +1041,7 @@ function construirPayloadMovimientosDesdeFormulario() {
       montoTotal = redondearNumero(toNumber(card.dataset.subtotal));
     }
 
-    if (!clienteCompraSinPrecio && montoTotal <= 0) {
+    if (!clienteCompraSinPrecio && montoTotal < 0) {
       error = 'Movimiento #' + numero + ': no se pudo calcular el monto total';
       return;
     }
@@ -1120,7 +1135,7 @@ function guardar() {
 
       producto = prodEl ? String(prodEl.value || '').trim() : '';
       cantidad = kgEl ? String(kgEl.value || '').trim() : '';
-      precio = precioEl ? String(precioEl.value || '').trim() : '';
+      precio = precioEl ? parsePrecio(precioEl.value) : 0;
     }
 
     return {

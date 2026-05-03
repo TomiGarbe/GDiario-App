@@ -1,5 +1,5 @@
 const API_BASE_URL = String(
-  window.API_URL || window.NEXT_PUBLIC_API_URL || "https://localhost:8000/api"
+  window.API_URL || window.NEXT_PUBLIC_API_URL || "https://gdiario-app.onrender.com/api"
 ).trim().replace(/\/$/, "");
 
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -17,6 +17,20 @@ function getTodayIso() {
 function toNum(value) {
   var n = Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+function parsePrecio(value) {
+  if (value == null) return 0;
+
+  var v = String(value).trim();
+  if (v === '') return 0;
+
+  v = v.replace(/\$/g, '').replace(/\./g, '').replace(',', '.');
+
+  var num = Number(v);
+  if (!Number.isFinite(num) || isNaN(num)) return 0;
+
+  return num < 0 ? 0 : num;
 }
 
 function isValidUUID(value) {
@@ -195,9 +209,11 @@ function buildCompraDetails(item) {
     .map(function(p) {
       var product = String(p && p.producto || '').trim();
       var qty = Math.max(0, toNum(p && p.kg));
-      var explicit = Math.max(0, toNum(p && p.precio));
-      var unit = explicit > 0 ? explicit : pricePerKg;
-      if (!product || !(qty > 0) || !(unit > 0)) return null;
+      var explicitRaw = p && p.unit_price;
+      if (explicitRaw == null || explicitRaw === '') explicitRaw = p && p.precio;
+      var explicit = Math.max(0, parsePrecio(explicitRaw));
+      var unit = explicit > 0 ? explicit : Math.max(0, pricePerKg);
+      if (!product || !(qty > 0) || !(unit >= 0)) return null;
 
       return {
         product: product,
@@ -217,7 +233,11 @@ function buildLegacyMovementCreate(item, fecha) {
     var clientCompra = item && item.cliente ? String(item.cliente).trim() : '';
     var compraItems = buildCompraDetails(item).map(function(d) {
       var qty = Math.max(0, toNum(d && d.quantity));
-      var price = Math.max(0, toNum(d && d.unit_price));
+      var rawPrice = d && d.unit_price;
+      var price = (rawPrice == null || rawPrice === '')
+        ? 0
+        : Math.max(0, toNum(rawPrice));
+      console.log("PRECIO NORMALIZADO:", price);
       return {
         client: clientCompra,
         product: d && d.product ? String(d.product).trim() : '',
@@ -226,12 +246,14 @@ function buildLegacyMovementCreate(item, fecha) {
         subtotal: qty * price
       };
     }).filter(function(it) {
-      return !!it.client && !!it.product && it.quantity > 0 && it.unit_price > 0 && it.subtotal > 0;
+      return !!it.client && !!it.product && it.quantity > 0 && it.unit_price >= 0 && it.subtotal >= 0;
     });
 
     var amountCompra = compraItems.reduce(function(acc, it) { return acc + toNum(it.subtotal); }, 0);
-    if (!compraItems.length || !(amountCompra > 0)) {
-      throw new Error('Compra invalida: faltan cliente/producto o precios mayores a 0');
+    console.log("ITEM FINAL:", compraItems);
+    console.log("AMOUNT FINAL:", amountCompra);
+    if (!compraItems.length) {
+      throw new Error('Compra invalida: faltan cliente/producto o cantidades');
     }
 
     return {
@@ -252,8 +274,8 @@ function buildLegacyMovementCreate(item, fecha) {
       precioDesc = montoDesc / kgDesc;
     }
     var subtotalDesc = kgDesc * precioDesc;
-    if (!(kgDesc > 0) || !(precioDesc > 0) || !(subtotalDesc > 0)) {
-      throw new Error('Descarga invalida: se requiere kg y precio mayor a 0');
+    if (!(kgDesc > 0) || !(precioDesc >= 0) || !(subtotalDesc >= 0)) {
+      throw new Error('Descarga invalida: se requiere kg');
     }
 
     var clientVenta = item && item.cliente ? String(item.cliente).trim() : '';
@@ -281,8 +303,8 @@ function buildLegacyMovementCreate(item, fecha) {
   if (tipo === 'pago a cliente') {
     var montoPago = Math.max(0, toNum(item && item.monto));
     var clientePago = item && item.cliente ? String(item.cliente).trim() : '';
-    if (!(montoPago > 0) || !clientePago) {
-      throw new Error('Pago a cliente invalido: se requiere cliente y monto mayor a 0');
+    if (!(montoPago >= 0) || !clientePago) {
+      throw new Error('Pago a cliente invalido: se requiere cliente y monto mayor o igual a 0');
     }
 
     return {

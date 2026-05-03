@@ -23,8 +23,8 @@ class ValidationService:
         salaries: list,
         client_payments: list,
     ) -> None:
-        if amount is None or amount <= 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: amount must be > 0")
+        if amount is None or amount < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: amount must be >= 0")
 
         if movement_type in (MovementType.COMPRA, MovementType.VENTA):
             if not items or salaries or client_payments:
@@ -55,8 +55,8 @@ class ValidationService:
     def validate_movement_fields(movement) -> None:
         if movement.date is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: date cannot be null")
-        if movement.amount is None or movement.amount <= 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: amount must be > 0")
+        if movement.amount is None or movement.amount < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: amount must be >= 0")
         try:
             MovementType(movement.type)
         except ValueError as exc:
@@ -66,10 +66,10 @@ class ValidationService:
     def validate_item_fields(item) -> None:
         if item.quantity is None or item.quantity <= 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement_item: quantity must be > 0")
-        if item.unit_price is None or item.unit_price <= 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement_item: unit_price must be > 0")
-        if item.subtotal is None or item.subtotal <= 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement_item: subtotal must be > 0")
+        if item.unit_price is None or item.unit_price < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement_item: unit_price must be >= 0")
+        if item.subtotal is None or item.subtotal < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement_item: subtotal must be >= 0")
 
     @staticmethod
     def validate_salary_fields(salary) -> None:
