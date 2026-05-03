@@ -1,6 +1,8 @@
-ï»¿var AUTH_STORAGE_KEY = 'usuario';
+var AUTH_STORAGE_KEY = 'usuario';
 var AUTH_STORAGE_LEGACY_KEY = 'grasa_usuario';
 var AUTH_TOKEN_KEY = 'token';
+var LOGIN_PATH = '/login.html';
+var HOME_PATH = '/';
 var GOOGLE_CLIENT_ID = String(window.GOOGLE_CLIENT_ID || '').trim();
 
 var _authOnReady = null;
@@ -119,7 +121,7 @@ function handleCredentialResponse(response) {
     return;
   }
   if (typeof apiLoginWithGoogle !== 'function') {
-    setAuthMessage('No se pudo iniciar sesiÃ³n (API no disponible).', 'err');
+    setAuthMessage('No se pudo iniciar sesión (API no disponible).', 'err');
     return;
   }
 
@@ -132,11 +134,10 @@ function handleCredentialResponse(response) {
       var nombre = String(payload.name || payload.given_name || email || 'Usuario').trim();
       guardarUsuario({ email: email, nombre: nombre, token: String(res.access_token || '').trim() });
       setAuthMessage('');
-      mostrarPantallaApp();
-      lanzarInitAppSiCorresponde();
+      window.location.href = HOME_PATH;
     })
     .catch(function(err) {
-      setAuthMessage(err && err.message ? err.message : 'No se pudo iniciar sesiÃ³n.', 'err');
+      setAuthMessage(err && err.message ? err.message : 'No se pudo iniciar sesión.', 'err');
     });
 }
 
@@ -199,11 +200,72 @@ function cerrarSesion() {
   renderGoogleLoginButton();
 }
 
+function getAuthToken() {
+  try {
+    return String(localStorage.getItem(AUTH_TOKEN_KEY) || '').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function isTokenExpired(token) {
+  var payload = parseJwt(token);
+  if (!payload || !payload.exp) return false;
+  var expMs = Number(payload.exp) * 1000;
+  if (!Number.isFinite(expMs)) return false;
+  return Date.now() >= expMs;
+}
+
+function redirectToLogin() {
+  if (window.location && window.location.pathname === LOGIN_PATH) return;
+  window.location.href = LOGIN_PATH;
+}
+
+function forceLogoutAndRedirect() {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem(AUTH_STORAGE_LEGACY_KEY);
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch (_) {
+    // Ignore storage errors.
+  }
+  redirectToLogin();
+}
+
+function checkAuthOrRedirect() {
+  var token = getAuthToken();
+  console.log('TOKEN ACTUAL:', token);
+
+  if (!token) {
+    console.warn('No token -> redirect login');
+    redirectToLogin();
+    return false;
+  }
+
+  if (isTokenExpired(token)) {
+    console.warn('Token expirado -> limpiar sesion');
+    forceLogoutAndRedirect();
+    return false;
+  }
+
+  return true;
+}
 function inicializarAutenticacion(onReady) {
+  var enLoginPage = window.location && window.location.pathname === LOGIN_PATH;
   _authOnReady = typeof onReady === 'function' ? onReady : null;
   actualizarUsuarioUI();
 
-  if (estaLogueado()) {
+  if (enLoginPage) {
+    if (estaLogueado() && !isTokenExpired(getAuthToken())) {
+      window.location.href = HOME_PATH;
+      return;
+    }
+    mostrarPantallaLogin();
+    esperarGoogleIdentity(40);
+    return;
+  }
+
+  if (checkAuthOrRedirect() && estaLogueado()) {
     mostrarPantallaApp();
     lanzarInitAppSiCorresponde();
     return;
@@ -221,3 +283,9 @@ window.handleCredentialResponse = handleCredentialResponse;
 window.inicializarAutenticacion = inicializarAutenticacion;
 window.mostrarPantallaLogin = mostrarPantallaLogin;
 window.mostrarPantallaApp = mostrarPantallaApp;
+window.getAuthToken = getAuthToken;
+window.checkAuthOrRedirect = checkAuthOrRedirect;
+window.forceLogoutAndRedirect = forceLogoutAndRedirect;
+
+
+
