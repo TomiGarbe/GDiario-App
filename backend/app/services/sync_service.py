@@ -716,6 +716,8 @@ class SyncService:
         for existing in existing_rows:
             if existing.deleted_at is not None:
                 continue
+            if existing.source != "sheet":
+                continue
             if existing.id in incoming_set:
                 continue
             existing.deleted_at = now_utc

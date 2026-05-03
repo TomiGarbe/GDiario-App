@@ -49,8 +49,14 @@ function reconstruirMovimientos() {
   Logger.log("Gastos: " + gastos.movements.length);
   Logger.log("Pagos: " + pagos.movements.length);
 
+  const rebuiltMovements = _deduplicateById(allMovements).filter((movement) => {
+    const rawType = String((movement && movement.type) || "").trim().toLowerCase();
+    const backendType = MOVEMENT_TYPE_TO_BACKEND[rawType] || rawType;
+    return backendType !== "entrega_dinero";
+  });
+
   return {
-    movements: _deduplicateById(allMovements),
+    movements: rebuiltMovements,
     movement_items: allItems,
     movement_salaries: allSalaries,
     movement_client_payments: allClientPayments
