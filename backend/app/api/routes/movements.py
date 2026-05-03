@@ -267,7 +267,6 @@ def get_balance(db: Session = Depends(get_db)) -> BalanceOut:
     movements = db.query(Movement).all()
 
     balance = Decimal("0")
-    sum_types = {"entrega_dinero", "venta"}
 
     for m in movements:
         amount = Decimal(m.amount)
@@ -276,9 +275,12 @@ def get_balance(db: Session = Depends(get_db)) -> BalanceOut:
             if hasattr(m.type, "value")
             else str(m.type).lower()
         )
+        print("TIPO:", tipo, "AMOUNT:", amount)
 
-        if tipo in sum_types:
+        if tipo == "entrega_dinero":
             balance += amount
+        elif tipo == "venta":
+            continue
         else:
             balance -= amount
 
