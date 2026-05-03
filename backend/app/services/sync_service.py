@@ -799,17 +799,6 @@ class SyncService:
             return sum((salary.subtotal for salary in movement.salaries), ZERO)
 
         if movement_type == MovementType.PAGO_CLIENTE and movement.client_payments:
-            normalized_clients = [normalize_entity_name(item.client_name) for item in movement.client_payments]
-            if all(es_cliente_sin_monto(name) for name in normalized_clients):
-                if movement.amount != ZERO:
-                    SyncService._logger.warning(
-                        "Amount > 0 recibido para pago cliente sin monto. movement_id=%s incoming=%s -> 0",
-                        movement.external_id,
-                        movement.amount,
-                    )
-                for client_name in normalized_clients:
-                    SyncService._logger.info("Cliente sin monto detectado: %s", client_name)
-                return ZERO
             return sum((client_payment.subtotal for client_payment in movement.client_payments), ZERO)
 
         return movement.amount
