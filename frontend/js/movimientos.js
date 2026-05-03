@@ -1,4 +1,4 @@
-ï»¿var contador = 0;
+var contador = 0;
 var compraItemSeq = 0;
 
 var CLIENTES_PAGO_FIJOS = [
@@ -1193,6 +1193,26 @@ function guardar() {
     })
     .catch(function(err) {
       console.error('ERROR GUARDAR MOVIMIENTO:', err);
+      console.log('ERROR BACKEND:', err && err.response ? err.response.data : undefined);
+
+      if (err && err.response && err.response.data && err.response.data.error === 'MOVEMENT_ALREADY_EXISTS') {
+        var data = err.response.data;
+        var cliente = String(data.client || 'este cliente');
+        var mensaje = 'Ya existe un movimiento para ' + cliente + ' en esa fecha.\n\n¿Querés editarlo?';
+
+        if (confirm(mensaje)) {
+          if (typeof window.abrirModalEditarMovimiento === 'function') {
+            window.abrirModalEditarMovimiento(data.movement_id);
+          } else if (typeof abrirModalEditarMovimiento === 'function') {
+            abrirModalEditarMovimiento(data.movement_id);
+          } else {
+            showToast('No se pudo abrir el editor del movimiento', 'error');
+          }
+        }
+
+        return;
+      }
+
       showToast('Error al guardar datos', 'error');
     });
 }

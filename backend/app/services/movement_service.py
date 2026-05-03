@@ -6,6 +6,7 @@ import logging
 from types import SimpleNamespace
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -37,6 +38,46 @@ class MovementNotFoundError(Exception):
 
 class MovementService:
     @staticmethod
+    def _validate_no_duplicate_client_movement(
+        db: Session,
+        movement_type: MovementType,
+        data: MovementCreate,
+    ) -> None:
+        if movement_type not in (MovementType.COMPRA, MovementType.VENTA):
+            return
+
+        clients = {
+            (str(item.client or "").strip().lower())
+            for item in (data.items or [])
+            if str(item.client or "").strip()
+        }
+
+        for client in clients:
+            existing = db.scalar(
+                select(Movement)
+                .join(MovementItem, MovementItem.movement_id == Movement.id)
+                .join(Client, Client.id == MovementItem.client_id)
+                .where(
+                    Movement.deleted_at.is_(None),
+                    Movement.date == data.date,
+                    Movement.type == movement_type,
+                    func.lower(func.trim(Client.name)) == client,
+                )
+                .order_by(Movement.created_at.asc())
+                .limit(1)
+            )
+
+            if existing is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "MOVEMENT_ALREADY_EXISTS",
+                        "client": client,
+                        "movement_id": str(existing.id),
+                    },
+                )
+
+    @staticmethod
     def get_movement_by_id(db: Session, movement_id: UUID) -> Movement:
         movement = db.scalar(
             select(Movement)
@@ -55,6 +96,7 @@ class MovementService:
     @staticmethod
     def create_movement(db: Session, data: MovementCreate) -> Movement:
         movement_type = MovementType(data.type)
+        MovementService._validate_no_duplicate_client_movement(db, movement_type, data)
         items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
 
         movement = Movement(

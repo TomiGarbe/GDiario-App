@@ -59,7 +59,7 @@ function upsertMovements(rows) {
     if (id) byId[id] = idx + 2;
   });
 
-  const normalized = _normalizeMovementRows(rows, "app");
+  const normalized = _normalizeMovementRows(rows, "app-entrega");
   normalized.forEach((movement) => {
     const movementId = String(movement.id || "").trim();
     if (!movementId) return;

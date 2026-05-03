@@ -398,6 +398,23 @@ function extractErrorMessage(response, payload) {
   return 'HTTP ' + response.status;
 }
 
+
+function buildHttpError(response, payload, rawText) {
+  var detail = payload && typeof payload === 'object' && payload.detail !== undefined
+    ? payload.detail
+    : payload;
+  var message = extractErrorMessage(response, payload);
+  var err = new Error(String(message || rawText || ('HTTP ' + response.status)));
+
+  err.status = response.status;
+  err.response = {
+    status: response.status,
+    data: detail
+  };
+  err.payload = payload;
+  err.raw = rawText;
+  return err;
+}
 function isAuthExemptPath(path) {
   var p = String(path || '').trim();
   return p === '/auth/google';
@@ -482,7 +499,7 @@ function request(path, opts) {
       }
 
       if (!response.ok) {
-        throw new Error(txt || extractErrorMessage(response, payload));
+        throw buildHttpError(response, payload, txt);
       }
 
       console.log('Response:', payload);
