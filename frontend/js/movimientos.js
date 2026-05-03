@@ -2,18 +2,18 @@ var contador = 0;
 var compraItemSeq = 0;
 
 var CLIENTES_PAGO_FIJOS = [
-  "BUENOS DIAS",
-  "CORDIEZ",
-  "MARIANO",
-  "SCURTI",
-  "AMANECER",
-  "OVIEDO",
-  "ALMACOR 35"
+  "Buenos dias",
+  "Cordiez",
+  "Mariano",
+  "Scurti",
+  "Amanecer",
+  "Oviedo",
+  "Almacor 35"
 ];
 
 var CLIENTES_SIN_PRECIO = CLIENTES_PAGO_FIJOS.slice();
 var PRODUCTOS_DESCARGA = ['Grasa', 'Huesos'];
-var CLIENTES_DESCARGA = ['NICO', 'MARCOS', 'REFINERIA'];
+var CLIENTES_DESCARGA = ['Nico', 'Marcos', 'Refineria'];
 var ICONO_CERRAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
 
 function normalizarTexto(valor) {

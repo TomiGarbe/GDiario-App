@@ -20,10 +20,8 @@ from app.models.period import Period
 from app.models.product import Product
 from app.schemas.movement import MovementCreate, MovementUpdate
 from app.services.google_sheets_writer import (
-    append_client_payments,
-    append_items,
-    append_movement,
     delete_movement_from_sheets,
+    sync_movement_to_sheets,
     test_sheets,
 )
 from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
@@ -124,9 +122,7 @@ class MovementService:
         print("APPEND MOVEMENT:", movement.id)
         if sheet_id:
             try:
-                append_movement(sheet_id, movement)
-                append_items(sheet_id, movement.items)
-                append_client_payments(sheet_id, movement.client_payments)
+                sync_movement_to_sheets(sheet_id, movement)
             except Exception:
                 logger.exception(
                     "Failed to append movement to Google Sheets. movement_id=%s period_id=%s",

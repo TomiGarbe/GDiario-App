@@ -21,6 +21,11 @@ DELETE_MOVEMENT_SHEETS = [
 ]
 MOVEMENT_ID_COLUMN_BY_SHEET = {
     "MOVEMENTS": 0,
+    "GRASA": 6,
+    "HUESOS": 6,
+    "CUENTAS": 3,
+    "SUELDOS": 3,
+    "GASTOS": 3,
 }
 
 
@@ -49,13 +54,15 @@ def append_movement(sheet_id: str, movement: Movement) -> None:
         str(movement.date),
         float(movement.amount),
         movement.description or "",
+        movement.updated_at.isoformat() if movement.updated_at else "",
+        movement.source or "",
     ]]
     print("SHEET_ID:", sheet_id)
     print("APPEND MOVEMENT:", movement.id)
     try:
         result = service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
-            range="MOVEMENTS!A:F",
+            range="MOVEMENTS!A:G",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
@@ -95,6 +102,33 @@ def append_items(sheet_id: str, items: list[MovementItem]) -> None:
         raise
 
 
+def append_items_to_product_sheets(sheet_id: str, movement: Movement) -> None:
+    if not movement.items:
+        return
+
+    service = get_sheets_service()
+    for item in movement.items:
+        product_name = (item.product.name or "").strip().upper()
+        if product_name not in {"GRASA", "HUESOS"}:
+            continue
+
+        values = [[
+            str(movement.date),
+            item.client.name,
+            movement.type.value,
+            float(item.quantity),
+            float(item.unit_price),
+            float(item.subtotal),
+            str(movement.id),
+        ]]
+        service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range=f"{product_name}!A:G",
+            valueInputOption="USER_ENTERED",
+            body={"values": values},
+        ).execute()
+
+
 def append_client_payments(sheet_id: str, payments: list[MovementClientPayment]) -> None:
     if not payments:
         return
@@ -120,6 +154,79 @@ def append_client_payments(sheet_id: str, payments: list[MovementClientPayment])
     except Exception as e:
         print("GOOGLE ERROR:", str(e))
         raise
+
+
+def append_client_payments_to_cuentas(sheet_id: str, movement: Movement) -> None:
+    if not movement.client_payments:
+        return
+
+    service = get_sheets_service()
+    for payment in movement.client_payments:
+        values = [[
+            str(movement.date),
+            payment.client.name,
+            float(payment.subtotal),
+            str(movement.id),
+        ]]
+        service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range="CUENTAS!A:D",
+            valueInputOption="USER_ENTERED",
+            body={"values": values},
+        ).execute()
+
+
+def append_salaries_to_sheet(sheet_id: str, movement: Movement) -> None:
+    if not movement.salaries:
+        return
+
+    service = get_sheets_service()
+    for salary in movement.salaries:
+        values = [[
+            str(movement.date),
+            salary.employee.name,
+            float(salary.subtotal),
+            str(movement.id),
+        ]]
+        service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range="SUELDOS!A:D",
+            valueInputOption="USER_ENTERED",
+            body={"values": values},
+        ).execute()
+
+
+def append_gasto_to_sheet(sheet_id: str, movement: Movement) -> None:
+    values = [[
+        str(movement.date),
+        movement.description or "",
+        float(movement.amount),
+        str(movement.id),
+        True,
+    ]]
+    service = get_sheets_service()
+    service.spreadsheets().values().append(
+        spreadsheetId=sheet_id,
+        range="GASTOS!A:E",
+        valueInputOption="USER_ENTERED",
+        body={"values": values},
+    ).execute()
+
+
+def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
+    append_movement(sheet_id, movement)
+
+    movement_type = movement.type.value
+    if movement_type in ("compra", "venta"):
+        append_items_to_product_sheets(sheet_id, movement)
+    if movement_type == "pago_cliente":
+        append_client_payments_to_cuentas(sheet_id, movement)
+    if movement_type == "sueldo":
+        append_salaries_to_sheet(sheet_id, movement)
+    if movement_type == "gasto":
+        append_gasto_to_sheet(sheet_id, movement)
+
+    print(f"[SHEETS WRITE] movement_id={movement.id} type={movement_type}")
 
 
 def get_sheet_gid(service, sheet_id: str, sheet_name: str) -> int:
