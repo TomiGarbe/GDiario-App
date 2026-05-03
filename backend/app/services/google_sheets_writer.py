@@ -381,14 +381,8 @@ def _upsert_product_quantity(
             col_index = i
             break
     if col_index is None:
-        col_index = len(header)
-        col_letter = _to_col_letter(col_index)
-        service.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id,
-            range=f"{sheet_name}!{col_letter}1",
-            valueInputOption="USER_ENTERED",
-            body={"values": [[target_date]]},
-        ).execute()
+        print(f"[SHEETS SKIP] Fecha no encontrada: {target_date}")
+        return
 
     rows = values[1:] if len(values) > 1 else []
     target_client = str(client_name or "").strip().lower()
@@ -399,13 +393,8 @@ def _upsert_product_quantity(
             row_index = i
             break
     if row_index is None:
-        row_index = len(values) + 1
-        service.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id,
-            range=f"{sheet_name}!A{row_index}",
-            valueInputOption="USER_ENTERED",
-            body={"values": [[client_name]]},
-        ).execute()
+        print(f"[SHEETS SKIP] Cliente no encontrado: {client_name}")
+        return
 
     col_letter = _to_col_letter(col_index)
     cell_result = service.spreadsheets().values().get(
@@ -421,3 +410,6 @@ def _upsert_product_quantity(
         valueInputOption="USER_ENTERED",
         body={"values": [[new_value]]},
     ).execute()
+    print(
+        f"[SHEETS OK] {sheet_name} cliente={client_name} fecha={target_date} +{float(quantity)}"
+    )
