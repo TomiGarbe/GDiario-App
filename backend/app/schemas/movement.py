@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -97,6 +97,8 @@ class MovementOut(BaseModel):
     type: str
     amount: Decimal
     description: str | None
+    updated_at: datetime
+    source: str
     items: list[MovementItemOut] = Field(default_factory=list)
     salaries: list[MovementSalaryOut] = Field(default_factory=list)
     client_payments: list[MovementClientPaymentOut] = Field(default_factory=list)

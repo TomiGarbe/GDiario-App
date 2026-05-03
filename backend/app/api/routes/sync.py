@@ -13,6 +13,8 @@ from app.schemas.sync import (
     SyncFullRequest,
     SyncFullExportResponse,
     SyncFullResponse,
+    SyncMirrorRequest,
+    SyncMirrorResponse,
     MovementClientPaymentSyncPayload,
     MovementItemSyncPayload,
     MovementSalarySyncPayload,
@@ -126,3 +128,20 @@ def get_sync_full(period_id: int, db: Session = Depends(get_db)) -> SyncFullExpo
         return SyncFullExportResponse(**result)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/mirror", response_model=SyncMirrorResponse, status_code=status.HTTP_200_OK)
+def sync_mirror(data: SyncMirrorRequest, db: Session = Depends(get_db)) -> SyncMirrorResponse:
+    try:
+        with db.begin():
+            result = SyncService.sync_mirror(
+                db=db,
+                period=data.period,
+                movements=data.movements,
+                since=data.since,
+            )
+        return SyncMirrorResponse(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Integrity error in mirror sync") from exc

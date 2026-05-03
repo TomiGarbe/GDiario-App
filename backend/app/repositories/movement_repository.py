@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -20,18 +21,28 @@ class MovementRepository:
         if not ids:
             return set()
 
-        rows = session.execute(select(Movement.id).where(Movement.id.in_(ids))).scalars().all()
+        rows = session.execute(
+            select(Movement.id).where(Movement.id.in_(ids), Movement.deleted_at.is_(None))
+        ).scalars().all()
         return set(rows)
 
     @staticmethod
     def upsert_movements(session: Session, rows: list[dict]) -> tuple[int, int]:
         if not rows:
             return 0, 0
+        now_utc = datetime.now(timezone.utc)
+        normalized_rows = []
+        for row in rows:
+            normalized = dict(row)
+            normalized.setdefault("updated_at", now_utc)
+            normalized.setdefault("source", "app")
+            normalized.setdefault("deleted_at", None)
+            normalized_rows.append(normalized)
 
-        ids = [row["id"] for row in rows]
+        ids = [row["id"] for row in normalized_rows]
         existing_ids = MovementRepository.existing_movement_ids(session, ids)
 
-        stmt = pg_insert(Movement).values(rows)
+        stmt = pg_insert(Movement).values(normalized_rows)
         session.execute(
             stmt.on_conflict_do_update(
                 index_elements=[Movement.id],
@@ -41,12 +52,15 @@ class MovementRepository:
                     "type": stmt.excluded.type,
                     "amount": stmt.excluded.amount,
                     "description": stmt.excluded.description,
+                    "updated_at": stmt.excluded.updated_at,
+                    "source": stmt.excluded.source,
+                    "deleted_at": stmt.excluded.deleted_at,
                 },
             )
         )
 
-        updated = sum(1 for row in rows if row["id"] in existing_ids)
-        inserted = len(rows) - updated
+        updated = sum(1 for row in normalized_rows if row["id"] in existing_ids)
+        inserted = len(normalized_rows) - updated
         return inserted, updated
 
     @staticmethod

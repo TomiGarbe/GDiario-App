@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, selectinload
 
@@ -146,6 +146,9 @@ class SyncService:
                 "type": MovementType(item.type),
                 "amount": item.amount,
                 "description": item.description,
+                "updated_at": getattr(item, "updated_at", None) or datetime.now(timezone.utc),
+                "source": getattr(item, "source", "sheet"),
+                "deleted_at": None,
             }
             for item in movement_list
         ]
@@ -275,7 +278,11 @@ class SyncService:
             raise ValueError("Duplicate movement external_id in payload")
 
         conflicts = db.execute(
-            select(Movement.id).where(Movement.id.in_(movement_ids), Movement.period_id != period_id)
+            select(Movement.id).where(
+                Movement.id.in_(movement_ids),
+                Movement.period_id != period_id,
+                Movement.deleted_at.is_(None),
+            )
         ).scalars().all()
         if conflicts:
             raise ValueError("Some movement external_id already exist in another period")
@@ -300,10 +307,15 @@ class SyncService:
 
         existing_in_period = set(
             db.execute(
-                select(Movement.id).where(Movement.id.in_(movement_ids), Movement.period_id == period_id)
+                select(Movement.id).where(
+                    Movement.id.in_(movement_ids),
+                    Movement.period_id == period_id,
+                    Movement.deleted_at.is_(None),
+                )
             ).scalars().all()
         )
 
+        now_utc = datetime.now(timezone.utc)
         movement_rows = [
             {
                 "id": movement.external_id,
@@ -312,6 +324,9 @@ class SyncService:
                 "type": movement_type_map[movement.external_id],
                 "amount": SyncService._coerce_sync_full_movement_amount(movement),
                 "description": movement.description,
+                "updated_at": now_utc,
+                "source": "sheet",
+                "deleted_at": None,
             }
             for movement in movement_list
         ]
@@ -325,6 +340,9 @@ class SyncService:
                     "type": stmt.excluded.type,
                     "amount": stmt.excluded.amount,
                     "description": stmt.excluded.description,
+                    "updated_at": stmt.excluded.updated_at,
+                    "source": stmt.excluded.source,
+                    "deleted_at": stmt.excluded.deleted_at,
                 },
             )
         )
@@ -562,12 +580,208 @@ class SyncService:
     def _get_movement_types(db: Session, movement_ids: set[UUID]) -> dict[UUID, MovementType]:
         if not movement_ids:
             return {}
-        rows = db.execute(select(Movement.id, Movement.type).where(Movement.id.in_(movement_ids))).all()
+        rows = db.execute(
+            select(Movement.id, Movement.type).where(
+                Movement.id.in_(movement_ids),
+                Movement.deleted_at.is_(None),
+            )
+        ).all()
         return {movement_id: movement_type for movement_id, movement_type in rows}
 
     @staticmethod
+    def sync_mirror(db: Session, period, movements: Iterable, since: datetime | None = None) -> dict:
+        period_id = SyncService._ensure_period_and_get_movement_period_id(db, period)
+        movement_list = list(movements)
+
+        incoming_ids = [movement.external_id for movement in movement_list]
+        if len(incoming_ids) != len(set(incoming_ids)):
+            raise ValueError("Duplicate movement external_id in payload")
+
+        existing_rows = db.execute(
+            select(Movement).where(Movement.period_id == period_id)
+        ).scalars().all()
+        existing_by_id = {row.id: row for row in existing_rows}
+
+        applied_inserted = 0
+        applied_updated = 0
+        now_utc = datetime.now(timezone.utc)
+
+        client_names = set()
+        product_names = set()
+        employee_names = set()
+        accepted_ids: list[UUID] = []
+        for movement in movement_list:
+            row_type = MovementType(movement.type)
+            if row_type in (MovementType.COMPRA, MovementType.VENTA):
+                if movement.salaries or movement.client_payments:
+                    raise ValueError(f"Movement {movement.external_id} has invalid detail types for {row_type.value}")
+            elif row_type == MovementType.SUELDO:
+                if movement.items or movement.client_payments:
+                    raise ValueError(f"Movement {movement.external_id} has invalid detail types for {row_type.value}")
+            elif row_type == MovementType.PAGO_CLIENTE:
+                if movement.items or movement.salaries:
+                    raise ValueError(f"Movement {movement.external_id} has invalid detail types for {row_type.value}")
+            else:
+                if movement.items or movement.salaries or movement.client_payments:
+                    raise ValueError(f"Movement {movement.external_id} cannot have detail rows")
+
+            existing = existing_by_id.get(movement.external_id)
+            incoming_updated_at = movement.updated_at
+            if existing and existing.updated_at and existing.updated_at > incoming_updated_at:
+                continue
+
+            if existing is None:
+                existing = Movement(id=movement.external_id)
+                db.add(existing)
+                applied_inserted += 1
+            else:
+                applied_updated += 1
+
+            existing.period_id = period_id
+            existing.date = movement.date
+            existing.type = row_type
+            existing.amount = SyncService._coerce_sync_full_movement_amount(movement)
+            if row_type == MovementType.PAGO_CLIENTE:
+                SyncService._logger.info(
+                    "sync_mirror pago_cliente movement_id=%s amount=%s client_payments=%s",
+                    movement.external_id,
+                    existing.amount,
+                    len(movement.client_payments),
+                )
+            existing.description = movement.description
+            existing.updated_at = incoming_updated_at
+            existing.source = movement.source
+            existing.deleted_at = None
+            accepted_ids.append(movement.external_id)
+
+            for item in movement.items:
+                client_names.add(normalize_entity_name(item.client_name))
+                product_names.add(normalize_entity_name(item.product_name))
+            for salary in movement.salaries:
+                employee_names.add(normalize_entity_name(salary.employee_name))
+            for client_payment in movement.client_payments:
+                client_names.add(normalize_entity_name(client_payment.client_name))
+
+        client_map = SyncService._load_entity_map(db, Client)
+        product_map = SyncService._load_entity_map(db, Product)
+        employee_map = SyncService._load_entity_map(db, Employee)
+        missing_clients = sorted(name for name in client_names if name not in client_map)
+        missing_products = sorted(name for name in product_names if name not in product_map)
+        missing_employees = sorted(name for name in employee_names if name not in employee_map)
+        if missing_clients:
+            raise ValueError(f"Clients not found: {', '.join(missing_clients)}")
+        if missing_products:
+            raise ValueError(f"Products not found: {', '.join(missing_products)}")
+        if missing_employees:
+            raise ValueError(f"Employees not found: {', '.join(missing_employees)}")
+
+        for movement in movement_list:
+            if movement.external_id not in accepted_ids:
+                continue
+            item_rows = [
+                SyncService._build_sync_full_movement_item_row(
+                    movement=movement,
+                    item=item,
+                    client_id=client_map[normalize_entity_name(item.client_name)],
+                    product_id=product_map[normalize_entity_name(item.product_name)],
+                )
+                for item in movement.items
+            ]
+            salary_rows = [
+                {
+                    "movement_id": movement.external_id,
+                    "employee_id": employee_map[normalize_entity_name(salary.employee_name)],
+                    "subtotal": salary.subtotal,
+                }
+                for salary in movement.salaries
+            ]
+            client_payment_rows = [
+                SyncService._build_sync_full_movement_client_payment_row(
+                    movement=movement,
+                    client_payment=client_payment,
+                    client_id=client_map[normalize_entity_name(client_payment.client_name)],
+                )
+                for client_payment in movement.client_payments
+            ]
+            SyncService._replace_details_for_movement(
+                db,
+                movement.external_id,
+                item_rows=item_rows,
+                salary_rows=salary_rows,
+                client_payment_rows=client_payment_rows,
+            )
+
+        incoming_set = set(incoming_ids)
+        deleted_count = 0
+        for existing in existing_rows:
+            if existing.deleted_at is not None:
+                continue
+            if existing.id in incoming_set:
+                continue
+            existing.deleted_at = now_utc
+            existing.updated_at = now_utc
+            existing.source = "sheet"
+            deleted_count += 1
+
+        if since is None:
+            db_changes = []
+        else:
+            db_changes = db.execute(
+                select(Movement).where(
+                    Movement.period_id == period_id,
+                    Movement.updated_at > since,
+                )
+                .order_by(Movement.updated_at.asc(), Movement.id.asc())
+            ).scalars().all()
+
+        return {
+            "period_id": period_id,
+            "applied_from_sheet": {
+                "received": len(movement_list),
+                "inserted": applied_inserted,
+                "updated": applied_updated,
+                "deleted": deleted_count,
+            },
+            "db_changes_since_cursor": [
+                {
+                    "id": movement.id,
+                    "period_id": movement.period_id,
+                    "date": movement.date,
+                    "type": movement.type.value if isinstance(movement.type, MovementType) else str(movement.type),
+                    "amount": movement.amount,
+                    "description": movement.description,
+                    "updated_at": movement.updated_at,
+                    "source": movement.source,
+                    "deleted_at": movement.deleted_at,
+                }
+                for movement in db_changes
+            ],
+        }
+
+    @staticmethod
+    def _replace_details_for_movement(
+        db: Session,
+        movement_id: UUID,
+        *,
+        item_rows: list[dict],
+        salary_rows: list[dict],
+        client_payment_rows: list[dict],
+    ) -> None:
+        db.execute(delete(MovementItem).where(MovementItem.movement_id == movement_id))
+        db.execute(delete(MovementSalary).where(MovementSalary.movement_id == movement_id))
+        db.execute(delete(MovementClientPayment).where(MovementClientPayment.movement_id == movement_id))
+        if item_rows:
+            db.execute(pg_insert(MovementItem).values(item_rows))
+        if salary_rows:
+            db.execute(pg_insert(MovementSalary).values(salary_rows))
+        if client_payment_rows:
+            db.execute(pg_insert(MovementClientPayment).values(client_payment_rows))
+
+    @staticmethod
     def _coerce_sync_full_movement_amount(movement) -> Decimal:
-        if movement.items:
+        movement_type = MovementType(movement.type)
+
+        if movement_type in (MovementType.COMPRA, MovementType.VENTA) and movement.items:
             normalized_clients = [normalize_entity_name(item.client_name) for item in movement.items]
             if all(es_cliente_sin_monto(name) for name in normalized_clients):
                 if movement.amount != ZERO:
@@ -579,8 +793,12 @@ class SyncService:
                 for client_name in normalized_clients:
                     SyncService._logger.info("Cliente sin monto detectado: %s", client_name)
                 return ZERO
-            return movement.amount
-        if movement.client_payments:
+            return sum((item.subtotal for item in movement.items), ZERO)
+
+        if movement_type == MovementType.SUELDO and movement.salaries:
+            return sum((salary.subtotal for salary in movement.salaries), ZERO)
+
+        if movement_type == MovementType.PAGO_CLIENTE and movement.client_payments:
             normalized_clients = [normalize_entity_name(item.client_name) for item in movement.client_payments]
             if all(es_cliente_sin_monto(name) for name in normalized_clients):
                 if movement.amount != ZERO:
@@ -592,7 +810,8 @@ class SyncService:
                 for client_name in normalized_clients:
                     SyncService._logger.info("Cliente sin monto detectado: %s", client_name)
                 return ZERO
-            return movement.amount
+            return sum((client_payment.subtotal for client_payment in movement.client_payments), ZERO)
+
         return movement.amount
 
     @staticmethod
@@ -695,6 +914,7 @@ class SyncService:
                     selectinload(Movement.client_payments).selectinload(MovementClientPayment.client),
                 )
                 .where(Movement.period_id == period_id)
+                .where(Movement.deleted_at.is_(None))
                 .order_by(Movement.date.asc(), Movement.created_at.asc(), Movement.id.asc())
             )
             .scalars()
@@ -715,6 +935,9 @@ class SyncService:
                     "type": movement.type.value if isinstance(movement.type, MovementType) else str(movement.type),
                     "amount": movement.amount,
                     "description": movement.description,
+                    "updated_at": movement.updated_at,
+                    "source": movement.source,
+                    "deleted_at": movement.deleted_at,
                 }
             )
 
@@ -758,3 +981,7 @@ class SyncService:
             "movement_salaries": movement_salary_rows,
             "movement_client_payments": movement_client_payment_rows,
         }
+
+
+
+

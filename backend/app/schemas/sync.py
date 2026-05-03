@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -344,6 +344,9 @@ class SyncFullMovementPayload(BaseModel):
     date: date
     amount: Decimal
     description: str | None = Field(default=None, max_length=500)
+    updated_at: datetime | None = None
+    source: Literal["sheet", "app"] = "sheet"
+    deleted_at: datetime | None = None
     items: list[SyncFullMovementItemPayload] = Field(default_factory=list)
     salaries: list[SyncFullMovementSalaryPayload] = Field(default_factory=list)
     client_payments: list[SyncFullMovementClientPaymentPayload] = Field(default_factory=list)
@@ -371,3 +374,33 @@ class SyncFullExportResponse(BaseModel):
     movement_items: list[MovementItemSyncPayload] = Field(default_factory=list)
     movement_salaries: list[MovementSalarySyncPayload] = Field(default_factory=list)
     movement_client_payments: list[MovementClientPaymentSyncPayload] = Field(default_factory=list)
+
+
+class SyncMirrorMovementPayload(BaseModel):
+    external_id: UUID
+    type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
+    date: date
+    amount: Decimal
+    description: str | None = Field(default=None, max_length=500)
+    updated_at: datetime
+    source: Literal["sheet", "app"] = "sheet"
+    deleted_at: datetime | None = None
+    items: list[SyncFullMovementItemPayload] = Field(default_factory=list)
+    salaries: list[SyncFullMovementSalaryPayload] = Field(default_factory=list)
+    client_payments: list[SyncFullMovementClientPaymentPayload] = Field(default_factory=list)
+
+
+class SyncMirrorRequest(BaseModel):
+    period: SyncPeriodPayload
+    movements: list[SyncMirrorMovementPayload] = Field(default_factory=list)
+    since: datetime | None = None
+
+
+class SyncMirrorResponse(BaseModel):
+    period_id: int
+    applied_from_sheet: SyncBatchResult
+    db_changes_since_cursor: list[MovementSyncPayload] = Field(default_factory=list)
+
+
+
+

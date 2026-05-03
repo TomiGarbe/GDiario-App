@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal
 from uuid import UUID
@@ -32,6 +33,7 @@ from app.schemas.movement import (
 from app.services.movement_service import MovementNotFoundError, MovementService
 
 router = APIRouter(prefix="/movements", tags=["movements"])
+logger = logging.getLogger(__name__)
 
 
 def _to_movement_out(movement: Movement) -> MovementOut:
@@ -41,6 +43,8 @@ def _to_movement_out(movement: Movement) -> MovementOut:
         type=movement.type.value if isinstance(movement.type, MovementType) else str(movement.type),
         amount=movement.amount,
         description=movement.description,
+        updated_at=movement.updated_at,
+        source=movement.source,
         items=[
             MovementItemOut(
                 client=item.client.name,
@@ -80,7 +84,7 @@ def _build_movements_filters(
     date_to: date | None,
     movement_type: MovementType | None,
 ) -> list:
-    filters = []
+    filters = [Movement.deleted_at.is_(None)]
     if date_from is not None:
         filters.append(Movement.date >= date_from)
     if date_to is not None:
@@ -143,6 +147,13 @@ def get_movements(
 def create_movement(payload: MovementCreate, db: Session = Depends(get_db)) -> MovementOut:
     try:
         movement = MovementService.create_movement(db, payload)
+        if movement.type == MovementType.PAGO_CLIENTE:
+            logger.info(
+                "create_movement pago_cliente movement_id=%s amount=%s client_payments=%s",
+                movement.id,
+                movement.amount,
+                len(movement.client_payments),
+            )
         return _to_movement_out(movement)
     except HTTPException:
         db.rollback()
@@ -264,7 +275,7 @@ def get_entities(db: Session = Depends(get_db)) -> EntitiesOut:
 
 @router.get("/balance", response_model=BalanceOut)
 def get_balance(db: Session = Depends(get_db)) -> BalanceOut:
-    movements = db.query(Movement).all()
+    movements = db.query(Movement).filter(Movement.deleted_at.is_(None)).all()
 
     balance = Decimal("0")
 

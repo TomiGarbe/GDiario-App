@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import UUID
@@ -30,7 +31,7 @@ class MovementService:
     def get_movement_by_id(db: Session, movement_id: UUID) -> Movement:
         movement = db.scalar(
             select(Movement)
-            .where(Movement.id == movement_id)
+            .where(Movement.id == movement_id, Movement.deleted_at.is_(None))
             .options(
                 selectinload(Movement.items).selectinload(MovementItem.client),
                 selectinload(Movement.items).selectinload(MovementItem.product),
@@ -53,6 +54,8 @@ class MovementService:
             type=movement_type,
             amount=amount,
             description=data.description,
+            source="app",
+            updated_at=datetime.now(timezone.utc),
         )
         db.add(movement)
         db.flush()
@@ -63,7 +66,7 @@ class MovementService:
 
     @staticmethod
     def update_movement(db: Session, movement_id: UUID, data: MovementUpdate) -> Movement:
-        movement = db.get(Movement, movement_id)
+        movement = db.scalar(select(Movement).where(Movement.id == movement_id, Movement.deleted_at.is_(None)))
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
 
@@ -75,6 +78,9 @@ class MovementService:
         movement.type = movement_type
         movement.amount = amount
         movement.description = data.description
+        movement.source = "app"
+        movement.updated_at = datetime.now(timezone.utc)
+        movement.deleted_at = None
 
         MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
         db.commit()
@@ -82,10 +88,12 @@ class MovementService:
 
     @staticmethod
     def delete_movement(db: Session, movement_id: UUID) -> None:
-        movement = db.get(Movement, movement_id)
+        movement = db.scalar(select(Movement).where(Movement.id == movement_id, Movement.deleted_at.is_(None)))
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
-        db.delete(movement)
+        movement.deleted_at = datetime.now(timezone.utc)
+        movement.updated_at = movement.deleted_at
+        movement.source = "app"
         db.commit()
 
     @staticmethod
@@ -199,11 +207,13 @@ class MovementService:
         total_debe = (
             db.query(func.coalesce(func.sum(Movement.amount), 0))
             .filter(Movement.date <= target_date, Movement.type.in_(debe_types))
+            .filter(Movement.deleted_at.is_(None))
             .scalar()
         )
         total_haber = (
             db.query(func.coalesce(func.sum(Movement.amount), 0))
             .filter(Movement.date <= target_date, Movement.type.in_(haber_types))
+            .filter(Movement.deleted_at.is_(None))
             .scalar()
         )
 

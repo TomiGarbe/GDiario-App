@@ -49,6 +49,18 @@ class Movement(Base):
         nullable=False,
         server_default=text("now()"),
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text("now()"),
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("'app'"),
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     items: Mapped[list["MovementItem"]] = relationship(
         "MovementItem",

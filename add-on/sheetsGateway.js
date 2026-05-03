@@ -1,5 +1,5 @@
 const MOVEMENTS_SHEET_NAME = "MOVEMENTS";
-const MOVEMENTS_HEADERS = ["id", "type", "date", "amount", "description", "source"];
+const MOVEMENTS_HEADERS = ["id", "type", "date", "amount", "description", "updated_at", "source"];
 const MOVEMENTS_HEADER_INDEX = _indexHeaders(MOVEMENTS_HEADERS);
 
 function readMovements() {
@@ -30,7 +30,7 @@ function readMovements() {
     return migrated;
   }
 
-  throw new Error("Invalid MOVEMENTS schema. Expected: [id,type,date,amount,description,source]");
+  throw new Error("Invalid MOVEMENTS schema. Expected: [id,type,date,amount,description,updated_at,source]");
 }
 
 function writeMovements(rows) {
@@ -48,24 +48,59 @@ function writeMovements(rows) {
   aplicarFormatoTablaGenerica(sheet, 2, [4]);
 }
 
+function upsertMovements(rows) {
+  const sheet = _getOrCreateSheet(MOVEMENTS_SHEET_NAME);
+  _ensureMovementsSchema(sheet);
+  const current = sheet.getDataRange().getValues();
+  const existingData = current.length > 1 ? current.slice(1) : [];
+  const byId = {};
+  existingData.forEach((row, idx) => {
+    const id = String(row[MOVEMENTS_HEADER_INDEX.id] || "").trim();
+    if (id) byId[id] = idx + 2;
+  });
+
+  const normalized = _normalizeMovementRows(rows, "app");
+  normalized.forEach((movement) => {
+    const movementId = String(movement.id || "").trim();
+    if (!movementId) return;
+    const rowValues = _movementToSheetRow(movement);
+    const rowNumber = byId[movementId];
+    if (rowNumber) {
+      sheet.getRange(rowNumber, 1, 1, MOVEMENTS_HEADERS.length).setValues([rowValues]);
+    } else {
+      const appendRow = sheet.getLastRow() + 1;
+      sheet.getRange(appendRow, 1, 1, MOVEMENTS_HEADERS.length).setValues([rowValues]);
+      byId[movementId] = appendRow;
+    }
+  });
+}
+
+function deleteMovementsByIds(ids) {
+  if (!Array.isArray(ids) || !ids.length) return;
+  const sheet = _getOrCreateSheet(MOVEMENTS_SHEET_NAME);
+  _ensureMovementsSchema(sheet);
+  const values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return;
+
+  const idSet = {};
+  ids.forEach((id) => {
+    const key = String(id || "").trim();
+    if (key) idSet[key] = true;
+  });
+
+  const keepRows = [values[0]];
+  for (let i = 1; i < values.length; i += 1) {
+    const rowId = String(values[i][MOVEMENTS_HEADER_INDEX.id] || "").trim();
+    if (!idSet[rowId]) keepRows.push(values[i]);
+  }
+
+  sheet.clear();
+  sheet.getRange(1, 1, keepRows.length, MOVEMENTS_HEADERS.length).setValues(keepRows);
+}
+
 function appendMovements(rows) {
   const sheet = _getOrCreateSheet(MOVEMENTS_SHEET_NAME);
-  const lastRow = sheet.getLastRow();
-  const lastCol = sheet.getLastColumn();
-
-  if (lastRow === 0 || lastCol === 0) {
-    sheet.getRange(1, 1, 1, MOVEMENTS_HEADERS.length).setValues([MOVEMENTS_HEADERS]);
-  } else {
-    const headers = _normalizeHeaders(sheet.getRange(1, 1, 1, lastCol).getValues()[0] || []);
-    if (!_headersMatchExact(headers, MOVEMENTS_HEADERS)) {
-      if (_isMigratableLegacyMovementsSchema(headers)) {
-        const migrated = readMovements();
-        writeMovements(migrated);
-      } else {
-        throw new Error("Invalid MOVEMENTS schema. Expected: [id,type,date,amount,description,source]");
-      }
-    }
-  }
+  _ensureMovementsSchema(sheet);
 
   const normalized = _normalizeMovementRows(rows, "manual");
   if (!normalized.length) return;
@@ -88,6 +123,7 @@ function _normalizeMovementRows(rows, defaultSource) {
     date: row && row.date !== undefined ? row.date : "",
     amount: row && row.amount !== undefined ? row.amount : "",
     description: row && row.description !== undefined ? row.description : "",
+    updated_at: row && row.updated_at !== undefined ? row.updated_at : "",
     source: row && row.source !== undefined ? row.source : defaultSource
   }));
 }
@@ -112,6 +148,7 @@ function _isMigratableLegacyMovementsSchema(headers) {
     amount: true,
     description: true,
     source: true,
+    updated_at: true,
     client: true,
     employee: true
   };
@@ -132,6 +169,7 @@ function _migrateLegacyMovements(rows, headers) {
       date: row[headerIndex.date] ?? "",
       amount: row[headerIndex.amount] ?? "",
       description: row[headerIndex.description] ?? "",
+      updated_at: headerIndex.updated_at !== undefined ? (row[headerIndex.updated_at] ?? "") : "",
       source: headerIndex.source !== undefined ? (row[headerIndex.source] ?? "legacy") : "legacy"
     }))
     .filter((mapped) => _hasAnyMovementValue(mapped));
@@ -144,6 +182,7 @@ function mapHeaders(row, headerIndex) {
     date: row[headerIndex.date] ?? "",
     amount: row[headerIndex.amount] ?? "",
     description: row[headerIndex.description] ?? "",
+    updated_at: row[headerIndex.updated_at] ?? "",
     source: row[headerIndex.source] ?? "legacy"
   };
 }
@@ -170,4 +209,21 @@ function _indexHeaders(headers) {
     out[h] = idx;
   });
   return out;
+}
+
+function _ensureMovementsSchema(sheet) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow === 0 || lastCol === 0) {
+    sheet.getRange(1, 1, 1, MOVEMENTS_HEADERS.length).setValues([MOVEMENTS_HEADERS]);
+    return;
+  }
+  const headers = _normalizeHeaders(sheet.getRange(1, 1, 1, lastCol).getValues()[0] || []);
+  if (_headersMatchExact(headers, MOVEMENTS_HEADERS)) return;
+  if (_isMigratableLegacyMovementsSchema(headers)) {
+    const migrated = readMovements();
+    writeMovements(migrated);
+    return;
+  }
+  throw new Error("Invalid MOVEMENTS schema. Expected: [id,type,date,amount,description,updated_at,source]");
 }

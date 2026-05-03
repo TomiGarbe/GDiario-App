@@ -196,11 +196,28 @@ function buildMainPayload(movementsById) {
   const movements = Object.keys(movementsById)
     .map((key) => movementsById[key])
     .map((movement) => {
+      let movementAmount = round4(movement.amount);
+      if (movement.type === "pago_cliente") {
+        movementAmount = round4(
+          (movement.client_payments || []).reduce((acc, payment) => {
+            return acc + Number(payment && payment.subtotal ? payment.subtotal : 0);
+          }, 0)
+        );
+      }
+
+      Logger.log(
+        "[SYNC PAYLOAD] movement_id=%s type=%s amount=%s client_payments=%s",
+        movement.external_id,
+        movement.type,
+        movementAmount,
+        (movement.client_payments || []).length
+      );
+
       return {
         external_id: movement.external_id,
         type: movement.type,
         date: movement.date,
-        amount: round4(movement.amount),
+        amount: movementAmount,
         description: movement.description,
         items: (movement.items || []).map((item) => ({
           client_name: item.client_name,
