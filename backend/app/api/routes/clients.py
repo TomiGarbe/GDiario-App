@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.security import get_current_user
 from app.schemas.client import ClientCreate, ClientResponse
 from app.services.client_service import (
     ClientAlreadyExistsError,
@@ -13,7 +14,11 @@ from app.services.client_service import (
     ClientService,
 )
 
-router = APIRouter(prefix="/clients", tags=["clients"])
+router = APIRouter(
+    prefix="/clients",
+    tags=["clients"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post("/", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)

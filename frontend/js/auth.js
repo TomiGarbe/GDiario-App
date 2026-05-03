@@ -1,20 +1,13 @@
-var AUTH_STORAGE_KEY = 'usuario';
+﻿var AUTH_STORAGE_KEY = 'usuario';
 var AUTH_STORAGE_LEGACY_KEY = 'grasa_usuario';
-var GOOGLE_CLIENT_ID = String(window.GOOGLE_CLIENT_ID || '651060073039-qa2irmld1gd678j041dmf5919q7q1328.apps.googleusercontent.com').trim();
-var ES_LOCAL = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-var USUARIO_FAKE_LOCAL = Object.freeze({
-  name: 'Dev User',
-  nombre: 'Dev User',
-  email: 'dev@local',
-  token: 'dev-token'
-});
+var AUTH_TOKEN_KEY = 'token';
+var GOOGLE_CLIENT_ID = String(window.GOOGLE_CLIENT_ID || '').trim();
 
 var _authOnReady = null;
 var _appInitLanzado = false;
 
 function parseJwt(token) {
   if (!token || typeof token !== 'string') return null;
-
   var parts = token.split('.');
   if (parts.length < 2) return null;
 
@@ -27,71 +20,50 @@ function parseJwt(token) {
       return '%' + ('00' + ch.charCodeAt(0).toString(16)).slice(-2);
     }).join(''));
     return JSON.parse(utf8);
-  } catch (e) {
-    try {
-      return JSON.parse(atob(base64));
-    } catch (_) {
-      return null;
-    }
+  } catch (_) {
+    return null;
   }
 }
 
 function guardarUsuario(usuario) {
   if (!usuario || typeof usuario !== 'object') return;
-
   var email = String(usuario.email || '').trim().toLowerCase();
-  if (!email) return;
+  var token = String(usuario.token || '').trim();
+  if (!email || !token) return;
 
   var nombre = String(usuario.nombre || usuario.name || email).trim();
-  var token = String(usuario.token || '').trim();
-  if (!token) return;
-
-  var limpio = {
-    email: email,
-    nombre: nombre,
-    name: nombre,
-    token: token
-  };
+  var limpio = { email: email, nombre: nombre, name: nombre, token: token };
 
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(limpio));
   localStorage.setItem(AUTH_STORAGE_LEGACY_KEY, JSON.stringify(limpio));
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
   actualizarUsuarioUI();
 }
 
 function obtenerUsuario() {
   try {
-    var raw = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (!raw) raw = localStorage.getItem(AUTH_STORAGE_LEGACY_KEY);
+    var raw = localStorage.getItem(AUTH_STORAGE_KEY) || localStorage.getItem(AUTH_STORAGE_LEGACY_KEY);
     if (!raw) return null;
 
     var usuario = JSON.parse(raw);
-    if (!usuario || typeof usuario !== 'object') return null;
-
-    var email = String(usuario.email || '').trim().toLowerCase();
-    if (!email) return null;
+    var email = String(usuario && usuario.email || '').trim().toLowerCase();
+    var token = String((usuario && usuario.token) || localStorage.getItem(AUTH_TOKEN_KEY) || '').trim();
+    if (!email || !token) return null;
 
     var nombre = String(usuario.nombre || usuario.name || email).trim();
-    var token = String(usuario.token || '').trim();
-    if (!token) return null;
-
-    var normalizado = {
-      email: email,
-      nombre: nombre,
-      name: nombre,
-      token: token
-    };
-
+    var normalizado = { email: email, nombre: nombre, name: nombre, token: token };
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(normalizado));
     localStorage.setItem(AUTH_STORAGE_LEGACY_KEY, JSON.stringify(normalizado));
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
     return normalizado;
-  } catch (e) {
+  } catch (_) {
     return null;
   }
 }
 
 function estaLogueado() {
-  var usuario = obtenerUsuario();
-  return !!(usuario && usuario.email && usuario.token);
+  var token = String(localStorage.getItem(AUTH_TOKEN_KEY) || '').trim();
+  return !!token;
 }
 
 function setAuthMessage(msg, tipo) {
@@ -114,15 +86,13 @@ function setAuthMessage(msg, tipo) {
 function actualizarUsuarioUI() {
   var el = document.getElementById('nombreUsuario') || document.getElementById('usuarioNombre');
   if (!el) return;
-
   var usuario = obtenerUsuario();
-  el.textContent = usuario ? (usuario.name || usuario.nombre || usuario.email) : '';
+  el.textContent = usuario ? (usuario.name || usuario.email) : '';
 }
 
 function mostrarPantallaLogin() {
   var login = document.getElementById('authGate');
   var app = document.getElementById('appRoot');
-
   if (app) app.style.display = 'none';
   if (login) login.style.display = 'flex';
 }
@@ -130,70 +100,53 @@ function mostrarPantallaLogin() {
 function mostrarPantallaApp() {
   var login = document.getElementById('authGate');
   var app = document.getElementById('appRoot');
-
   if (login) login.style.display = 'none';
   if (app) app.style.display = 'block';
-
   actualizarUsuarioUI();
 }
 
 function lanzarInitAppSiCorresponde() {
   if (_appInitLanzado) return;
   if (typeof _authOnReady !== 'function') return;
-
   _appInitLanzado = true;
   _authOnReady();
 }
 
-function iniciarSesionLocalDev() {
-  guardarUsuario(USUARIO_FAKE_LOCAL);
-  setAuthMessage('');
-  mostrarPantallaApp();
-  lanzarInitAppSiCorresponde();
-}
-
 function handleCredentialResponse(response) {
-  var credential = response && response.credential ? response.credential : '';
-  if (!credential) {
-    setAuthMessage('No se pudo validar el usuario de Google.', 'err');
+  var googleToken = String(response && response.credential || '').trim();
+  if (!googleToken) {
+    setAuthMessage('No se pudo validar el token de Google.', 'err');
     return;
   }
-
   if (typeof apiLoginWithGoogle !== 'function') {
-    setAuthMessage('No se pudo iniciar sesion (API no disponible).', 'err');
+    setAuthMessage('No se pudo iniciar sesión (API no disponible).', 'err');
     return;
   }
-
-  var payload = parseJwt(credential) || {};
-  var nombre = payload.name || payload.given_name || payload.email || '';
 
   setAuthMessage('Validando acceso...', 'info');
 
-  apiLoginWithGoogle(credential)
-    .then(function(login) {
-      guardarUsuario({
-        email: login.email,
-        nombre: nombre || login.email,
-        token: login.token
-      });
-
+  apiLoginWithGoogle(googleToken)
+    .then(function(res) {
+      var payload = parseJwt(googleToken) || {};
+      var email = String(payload.email || '').trim().toLowerCase();
+      var nombre = String(payload.name || payload.given_name || email || 'Usuario').trim();
+      guardarUsuario({ email: email, nombre: nombre, token: String(res.access_token || '').trim() });
       setAuthMessage('');
       mostrarPantallaApp();
       lanzarInitAppSiCorresponde();
     })
     .catch(function(err) {
-      setAuthMessage(err && err.message ? err.message : 'No se pudo iniciar sesion.', 'err');
+      setAuthMessage(err && err.message ? err.message : 'No se pudo iniciar sesión.', 'err');
     });
 }
 
 function renderGoogleLoginButton() {
   var mount = document.getElementById('googleLoginBtn');
   if (!mount) return;
-
   mount.innerHTML = '';
 
-  if (!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID.indexOf('TU_CLIENT_ID') !== -1) {
-    setAuthMessage('Configura GOOGLE_CLIENT_ID en frontend/js/auth.js para habilitar el login.', 'err');
+  if (!GOOGLE_CLIENT_ID) {
+    setAuthMessage('Falta GOOGLE_CLIENT_ID en frontend.', 'err');
     return;
   }
 
@@ -201,8 +154,6 @@ function renderGoogleLoginButton() {
     setAuthMessage('Cargando Google Login...', 'info');
     return;
   }
-
-  setAuthMessage('');
 
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
@@ -218,6 +169,8 @@ function renderGoogleLoginButton() {
     shape: 'pill',
     width: 280
   });
+
+  setAuthMessage('');
 }
 
 function esperarGoogleIdentity(tries) {
@@ -225,25 +178,17 @@ function esperarGoogleIdentity(tries) {
     renderGoogleLoginButton();
     return;
   }
-
   if (tries <= 0) {
     setAuthMessage('No se pudo cargar Google Identity Services.', 'err');
     return;
   }
-
-  setTimeout(function() {
-    esperarGoogleIdentity(tries - 1);
-  }, 250);
+  setTimeout(function() { esperarGoogleIdentity(tries - 1); }, 250);
 }
 
 function cerrarSesion() {
-  if (ES_LOCAL) {
-    iniciarSesionLocalDev();
-    return;
-  }
-
   localStorage.removeItem(AUTH_STORAGE_KEY);
   localStorage.removeItem(AUTH_STORAGE_LEGACY_KEY);
+  localStorage.removeItem(AUTH_TOKEN_KEY);
   actualizarUsuarioUI();
 
   if (window.google && google.accounts && google.accounts.id && typeof google.accounts.id.disableAutoSelect === 'function') {
@@ -256,25 +201,18 @@ function cerrarSesion() {
 
 function inicializarAutenticacion(onReady) {
   _authOnReady = typeof onReady === 'function' ? onReady : null;
-
   actualizarUsuarioUI();
-
-  if (ES_LOCAL) {
-    iniciarSesionLocalDev();
-    return;
-  }
 
   if (estaLogueado()) {
     mostrarPantallaApp();
     lanzarInitAppSiCorresponde();
-  } else {
-    mostrarPantallaLogin();
+    return;
   }
 
+  mostrarPantallaLogin();
   esperarGoogleIdentity(40);
 }
 
-window.parseJwt = parseJwt;
 window.guardarUsuario = guardarUsuario;
 window.obtenerUsuario = obtenerUsuario;
 window.estaLogueado = estaLogueado;

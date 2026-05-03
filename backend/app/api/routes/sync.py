@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.security import get_current_user
 from app.schemas.sync import (
     SyncClientsRequest,
     SyncClientsResponse,
@@ -23,7 +24,11 @@ from app.schemas.sync import (
 )
 from app.services.sync_service import SyncService
 
-router = APIRouter(prefix="/sync", tags=["sync"])
+router = APIRouter(
+    prefix="/sync",
+    tags=["sync"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post("/clients", response_model=SyncClientsResponse, status_code=status.HTTP_200_OK)

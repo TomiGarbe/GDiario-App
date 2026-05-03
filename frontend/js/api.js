@@ -1,4 +1,4 @@
-const API_BASE_URL = String(
+﻿const API_BASE_URL = String(
   window.API_URL || window.NEXT_PUBLIC_API_URL || "https://gdiario-app.onrender.com/api"
 ).trim().replace(/\/$/, "");
 
@@ -406,12 +406,26 @@ function request(path, opts) {
 
   console.log('Request:', method, url, bodyPayload);
 
+  var token = '';
+  try {
+    token = String(localStorage.getItem('token') || '').trim();
+    if (!token && typeof obtenerUsuario === 'function') {
+      var usuario = obtenerUsuario();
+      token = String(usuario && usuario.token || '').trim();
+    }
+  } catch (_) {
+    token = '';
+  }
+
+  var authHeaders = {};
+  if (token) authHeaders.Authorization = 'Bearer ' + token;
+
   return fetch(url, {
     method: method,
     headers: Object.assign({
       'Accept': 'application/json',
       'Content-Type': 'application/json'
-    }, options.headers || {}),
+    }, authHeaders, options.headers || {}),
     body: bodyPayload !== undefined ? JSON.stringify(bodyPayload) : undefined
   }).then(function(response) {
     if (response.status === 204) return null;
@@ -483,17 +497,19 @@ function getInitialData() {
   });
 }
 
-function apiLoginWithGoogle(credential) {
-  var cred = String(credential || '').trim();
-  if (!cred) return Promise.reject(new Error('Token requerido'));
+function apiLoginWithGoogle(idToken) {
+  var googleToken = String(idToken || '').trim();
+  if (!googleToken) return Promise.reject(new Error('Token de Google requerido'));
 
-  var payload = (typeof parseJwt === 'function' ? parseJwt(cred) : null) || {};
-  var email = String(payload.email || '').trim().toLowerCase();
-
-  return Promise.resolve({
-    ok: true,
-    token: cred,
-    email: email || 'usuario@local'
+  return request('/auth/google', {
+    method: 'POST',
+    body: {
+      id_token: googleToken
+    }
+  }).then(function(resp) {
+    var token = String(resp && resp.access_token || '').trim();
+    if (!token) throw new Error('Respuesta de login inválida');
+    return { access_token: token };
   });
 }
 
@@ -630,3 +646,5 @@ window.fetchConAuth = fetchConAuth;
 window.api = api;
 window.API_BASE_URL = API_BASE_URL;
 window.isValidUUID = isValidUUID;
+
+

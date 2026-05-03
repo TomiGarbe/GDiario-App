@@ -10,6 +10,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.db import get_db
+from app.core.security import get_current_user
 from app.models.client import Client
 from app.models.movement import Movement, MovementType
 from app.models.movement_client_payment import MovementClientPayment
@@ -32,7 +33,11 @@ from app.schemas.movement import (
 )
 from app.services.movement_service import MovementNotFoundError, MovementService
 
-router = APIRouter(prefix="/movements", tags=["movements"])
+router = APIRouter(
+    prefix="/movements",
+    tags=["movements"],
+    dependencies=[Depends(get_current_user)],
+)
 logger = logging.getLogger(__name__)
 
 

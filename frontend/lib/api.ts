@@ -44,6 +44,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const { method = "GET", body, headers, signal } = options;
   const url = buildUrl(path);
   const requestBody = body !== undefined ? JSON.stringify(body) : undefined;
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
   let response: Response;
   try {
@@ -53,6 +54,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...headers,
       },
       body: requestBody,

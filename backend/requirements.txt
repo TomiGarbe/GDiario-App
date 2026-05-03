@@ -4,6 +4,8 @@ sqlalchemy
 psycopg2-binary
 alembic
 python-dotenv
+python-jose[cryptography]
+google-auth
 gunicorn
 pytest
 httpx
