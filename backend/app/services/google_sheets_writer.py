@@ -19,6 +19,9 @@ DELETE_MOVEMENT_SHEETS = [
     "SUELDOS",
     "GASTOS",
 ]
+MOVEMENT_ID_COLUMN_BY_SHEET = {
+    "MOVEMENTS": 0,
+}
 
 
 @lru_cache(maxsize=1)
@@ -128,7 +131,13 @@ def get_sheet_gid(service, sheet_id: str, sheet_name: str) -> int:
     raise Exception(f"Sheet not found: {sheet_name}")
 
 
-def find_rows_by_movement_id(service, sheet_id: str, sheet_name: str, movement_id: str) -> list[int]:
+def find_rows_by_movement_id(
+    service,
+    sheet_id: str,
+    sheet_name: str,
+    movement_id: str,
+    id_column_index: int = 0,
+) -> list[int]:
     result = service.spreadsheets().values().get(
         spreadsheetId=sheet_id,
         range=f"{sheet_name}!A:Z",
@@ -139,7 +148,14 @@ def find_rows_by_movement_id(service, sheet_id: str, sheet_name: str, movement_i
     for i, row in enumerate(values):
         if not row:
             continue
-        if str(row[-1]).strip() == target:
+        if id_column_index >= len(row):
+            print(f"[DEBUG] Sheet={sheet_name} Row={i+1} ID=<missing>")
+            continue
+
+        row_id = str(row[id_column_index]).strip()
+        print(f"[DEBUG] Sheet={sheet_name} Row={i+1} ID={row_id}")
+
+        if row_id == target:
             rows.append(i + 1)  # Sheets row index starts at 1
     return rows
 
@@ -175,7 +191,8 @@ def delete_movement_from_sheets(sheet_id: str, movement_id: str) -> None:
     print(f"[SHEETS DELETE] movement_id={movement_id}")
 
     for sheet_name in DELETE_MOVEMENT_SHEETS:
-        rows = find_rows_by_movement_id(service, sheet_id, sheet_name, movement_id)
+        id_col = MOVEMENT_ID_COLUMN_BY_SHEET.get(sheet_name, 0)
+        rows = find_rows_by_movement_id(service, sheet_id, sheet_name, movement_id, id_col)
         delete_rows(service, sheet_id, sheet_name, rows)
 
 

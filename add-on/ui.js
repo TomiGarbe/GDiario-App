@@ -71,11 +71,11 @@ function accionReconstruirMovimientos() {
     const result = reconstruirMovimientos() || {};
     const rebuiltMovements = Array.isArray(result.movements) ? result.movements : [];
     const existingMovements = readMovements();
-    const appMovements = (existingMovements || []).filter((m) => {
+    const preservedMovements = (existingMovements || []).filter((m) => {
       const source = String((m && m.source) || "").trim().toLowerCase();
-      return source === "app";
+      return source === "app-entrega";
     });
-    const movements = appMovements.concat(rebuiltMovements);
+    const movements = preservedMovements.concat(rebuiltMovements);
     const movementItems = Array.isArray(result.movement_items) ? result.movement_items : [];
     const movementSalaries = Array.isArray(result.movement_salaries) ? result.movement_salaries : [];
     const movementClientPayments = Array.isArray(result.movement_client_payments) ? result.movement_client_payments : [];
