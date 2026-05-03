@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import get_current_user
+from app.core.sync_auth import verify_sync_key
 from app.schemas.sync import (
     SyncClientsRequest,
     SyncClientsResponse,
@@ -27,7 +27,7 @@ from app.services.sync_service import SyncService
 router = APIRouter(
     prefix="/sync",
     tags=["sync"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(verify_sync_key)],
 )
 
 

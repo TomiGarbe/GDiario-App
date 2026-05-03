@@ -18,6 +18,7 @@ class Settings:
     jwt_expire_days: int
     google_client_id: str
     allowed_emails: tuple[str, ...]
+    sync_api_key: str
 
 
 @lru_cache
@@ -46,6 +47,9 @@ def get_settings() -> Settings:
 
     jwt_algorithm = os.getenv("JWT_ALGORITHM", "HS256").strip() or "HS256"
     jwt_expire_days = int(os.getenv("JWT_EXPIRE_DAYS", "365"))
+    sync_api_key = os.getenv("SYNC_API_KEY", "").strip()
+    if not sync_api_key:
+        raise RuntimeError("SYNC_API_KEY is not set. Define it in backend/.env")
 
     return Settings(
         database_url=database_url,
@@ -54,4 +58,5 @@ def get_settings() -> Settings:
         jwt_expire_days=jwt_expire_days,
         google_client_id=google_client_id,
         allowed_emails=allowed_emails,
+        sync_api_key=sync_api_key,
     )

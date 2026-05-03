@@ -1,4 +1,5 @@
 const API_URL = "https://gdiario-app.onrender.com/api";
+const SYNC_API_KEY = "uLqPsLNQkdVJ3RlpJRMGJq6ePfSTFalLk-wH5j_tEUY";
 
 const MOVEMENT_TYPE_TO_BACKEND = {
   "compra": "compra",
@@ -353,12 +354,17 @@ function sendToBackend(path, payload) {
   const response = UrlFetchApp.fetch(API_URL + path, {
     method: "post",
     contentType: "application/json",
+    headers: {
+      "x-api-key": SYNC_API_KEY
+    },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });
 
   const code = response.getResponseCode();
   const body = response.getContentText();
+  Logger.log("STATUS: " + code);
+  Logger.log("BODY: " + body);
 
   if (code < 200 || code >= 300) {
     Logger.log("Error HTTP " + code + " en " + path + ": " + body);
