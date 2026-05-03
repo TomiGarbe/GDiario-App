@@ -193,7 +193,10 @@ function attachClientPayments(movementsById, rows) {
 }
 
 function buildMainPayload(movementsById) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
   const period = getPeriodPayload();
+  const periodId = Number(period.year) * 100 + Number(period.month);
+  const sheetId = ss.getId();
   const movements = Object.keys(movementsById)
     .map((key) => movementsById[key])
     .map((movement) => {
@@ -240,10 +243,14 @@ function buildMainPayload(movementsById) {
 
   Logger.log("Payload principal armado. movements=" + movements.length);
 
-  return {
+  const payload = {
     period: period,
     movements: movements
   };
+
+  payload.sheet_id = sheetId;
+  payload.period_id = periodId;
+  return payload;
 }
 
 function buildPrices(rows) {
@@ -400,6 +407,14 @@ function getPeriodPayload() {
 function validateMainPayload(payload) {
   if (!payload || !payload.period || !Array.isArray(payload.movements)) {
     throw new Error("Payload principal inválido");
+  }
+
+  if (!cleanText(payload.sheet_id)) {
+    throw new Error("Payload principal inválido: sheet_id faltante");
+  }
+
+  if (!Number.isInteger(Number(payload.period_id))) {
+    throw new Error("Payload principal inválido: period_id faltante o inválido");
   }
 
   payload.movements.forEach((movement, idx) => {

@@ -116,7 +116,13 @@ def sync_full(data: SyncFullRequest, db: Session = Depends(get_db)) -> SyncFullR
         print("SYNC CALLED")
         print("REBUILD CALLED")
         with db.begin():
-            result = SyncService.sync_full(db=db, period=data.period, movements=data.movements)
+            result = SyncService.sync_full(
+                db=db,
+                period=data.period,
+                movements=data.movements,
+                sheet_id=data.sheet_id,
+                period_id=data.period_id,
+            )
         return SyncFullResponse(**result)
     except HTTPException:
         raise

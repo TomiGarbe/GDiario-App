@@ -316,8 +316,18 @@ class SyncBatchResult(BaseModel):
 
 
 class SyncFullRequest(BaseModel):
+    sheet_id: str = Field(..., min_length=1, max_length=255)
+    period_id: int = Field(..., ge=190001, le=300012)
     period: SyncPeriodPayload
     movements: list["SyncFullMovementPayload"] = Field(default_factory=list)
+
+    @field_validator("sheet_id")
+    @classmethod
+    def validate_sync_full_sheet_id(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("sheet_id cannot be empty")
+        return clean
 
 
 class SyncFullMovementItemPayload(BaseModel):

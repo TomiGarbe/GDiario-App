@@ -260,8 +260,15 @@ class SyncService:
         return len(client_payment_list), inserted, deleted
 
     @staticmethod
-    def sync_full(db: Session, period, movements: Iterable) -> dict:
-        period_id = SyncService._ensure_period_and_get_movement_period_id(db, period)
+    def sync_full(db: Session, period, movements: Iterable, sheet_id: str, period_id: int) -> dict:
+        if not str(sheet_id or "").strip():
+            raise ValueError("sheet_id is required in sync/full")
+
+        expected_period_id = period.year * 100 + period.month
+        if period_id != expected_period_id:
+            raise ValueError("period_id does not match period.year/month")
+
+        period_id = SyncService._ensure_period_and_get_movement_period_id(db, period, sheet_id=sheet_id)
         movement_list = list(movements)
         if not movement_list:
             SyncService._logger.info("sync_full period=%s/%s with zero movements", period.year, period.month)
@@ -535,10 +542,11 @@ class SyncService:
         }
 
     @staticmethod
-    def _ensure_period_and_get_movement_period_id(db: Session, period) -> int:
+    def _ensure_period_and_get_movement_period_id(db: Session, period, sheet_id: str | None = None) -> int:
         record = db.execute(
             select(Period).where(Period.year == period.year, Period.month == period.month)
         ).scalar_one_or_none()
+        clean_sheet_id = str(sheet_id or "").strip() or None
         if record is None:
             period_start = getattr(period, "start_date", None) or date(period.year, period.month, 1)
             if period.month == 12:
@@ -550,11 +558,15 @@ class SyncService:
                 year=period.year,
                 month=period.month,
                 name=getattr(period, "name", None) or f"{period.year:04d}-{period.month:02d}",
+                sheet_id=clean_sheet_id,
                 start_date=period_start,
                 end_date=getattr(period, "end_date", None) or period_end,
             )
             db.add(record)
             db.flush()
+        elif clean_sheet_id:
+            record.sheet_id = clean_sheet_id
+        print(f"[SYNC] Period {period.year * 100 + period.month} -> sheet_id={clean_sheet_id}")
         return period.year * 100 + period.month
 
     @staticmethod
