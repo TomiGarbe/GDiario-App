@@ -1,4 +1,4 @@
-const API_URL = "https://gdiario-app.onrender.com/api";
+const API_URL = "https://gdiario.azurewebsites.net/api";
 const SYNC_API_KEY = "uLqPsLNQkdVJ3RlpJRMGJq6ePfSTFalLk-wH5j_tEUY";
 
 const MOVEMENT_TYPE_TO_BACKEND = {

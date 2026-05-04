@@ -11,9 +11,9 @@
   "urlFetchWhitelist": [
     "https://script.google.com/*",
     "https://script.googleapis.com/*",
-    "https://gdiario-app.onrender.com/",
-    "https://gdiario-app.onrender.com/api/sync/export",
-    "https://gdiario-app.onrender.com/api/sync/import-sheet"
+    "https://gdiario.azurewebsites.net/",
+    "https://gdiario.azurewebsites.net/api/sync/export",
+    "https://gdiario.azurewebsites.net/api/sync/import-sheet"
   ],
   "addOns": {
     "common": {
