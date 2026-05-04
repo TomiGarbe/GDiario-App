@@ -232,6 +232,11 @@ def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
         append_gasto_to_sheet(sheet_id, movement)
 
 
+def update_movement_sheets(sheet_id: str, movement: Movement) -> None:
+    delete_movement_from_sheets(sheet_id, str(movement.id))
+    sync_movement_to_sheets(sheet_id, movement)
+
+
 def get_sheet_gid(service, sheet_id: str, sheet_name: str) -> int:
     meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
     for sheet in meta.get("sheets", []):

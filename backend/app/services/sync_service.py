@@ -582,24 +582,34 @@ class SyncService:
     def sync_mirror(db: Session, period, movements: Iterable, since: datetime | None = None) -> dict:
         period_id = SyncService._ensure_period_and_get_movement_period_id(db, period)
         movement_list = list(movements)
-
-        incoming_ids = [movement.external_id for movement in movement_list]
-        if len(incoming_ids) != len(set(incoming_ids)):
+        sheet_ids = [movement.external_id for movement in movement_list]
+        if len(sheet_ids) != len(set(sheet_ids)):
             raise ValueError("Duplicate movement external_id in payload")
+        existing_rows = (
+            db.execute(
+                select(Movement)
+                .options(
+                    selectinload(Movement.items).selectinload(MovementItem.client),
+                    selectinload(Movement.items).selectinload(MovementItem.product),
+                    selectinload(Movement.salaries).selectinload(MovementSalary.employee),
+                    selectinload(Movement.client_payments).selectinload(MovementClientPayment.client),
+                )
+                .where(Movement.period_id == period_id)
+            )
+            .scalars()
+            .all()
+        )
+        sheet_map = {movement.external_id: movement for movement in movement_list}
+        db_all_map = {movement.id: movement for movement in existing_rows}
+        db_map = {movement.id: movement for movement in existing_rows if movement.deleted_at is None}
 
-        existing_rows = db.execute(
-            select(Movement).where(Movement.period_id == period_id)
-        ).scalars().all()
-        existing_by_id = {row.id: row for row in existing_rows}
-
-        applied_inserted = 0
-        applied_updated = 0
+        inserted_count = 0
+        updated_count = 0
         now_utc = datetime.now(timezone.utc)
 
         client_names = set()
         product_names = set()
         employee_names = set()
-        accepted_ids: list[UUID] = []
         for movement in movement_list:
             row_type = MovementType(movement.type)
             if row_type in (MovementType.COMPRA, MovementType.VENTA):
@@ -614,35 +624,6 @@ class SyncService:
             else:
                 if movement.items or movement.salaries or movement.client_payments:
                     raise ValueError(f"Movement {movement.external_id} cannot have detail rows")
-
-            existing = existing_by_id.get(movement.external_id)
-            incoming_updated_at = movement.updated_at
-            if existing and existing.updated_at and existing.updated_at > incoming_updated_at:
-                continue
-
-            if existing is None:
-                existing = Movement(id=movement.external_id)
-                db.add(existing)
-                applied_inserted += 1
-            else:
-                applied_updated += 1
-
-            existing.period_id = period_id
-            existing.date = movement.date
-            existing.type = row_type
-            existing.amount = SyncService._coerce_sync_full_movement_amount(movement)
-            if row_type == MovementType.PAGO_CLIENTE:
-                SyncService._logger.info(
-                    "sync_mirror pago_cliente movement_id=%s amount=%s client_payments=%s",
-                    movement.external_id,
-                    existing.amount,
-                    len(movement.client_payments),
-                )
-            existing.description = movement.description
-            existing.updated_at = incoming_updated_at
-            existing.source = movement.source
-            existing.deleted_at = None
-            accepted_ids.append(movement.external_id)
 
             for item in movement.items:
                 client_names.add(normalize_entity_name(item.client_name))
@@ -665,49 +646,63 @@ class SyncService:
         if missing_employees:
             raise ValueError(f"Employees not found: {', '.join(missing_employees)}")
 
-        for movement in movement_list:
-            if movement.external_id not in accepted_ids:
-                continue
-            item_rows = [
-                SyncService._build_sync_full_movement_item_row(
-                    movement=movement,
-                    item=item,
-                    client_id=client_map[normalize_entity_name(item.client_name)],
-                    product_id=product_map[normalize_entity_name(item.product_name)],
-                )
-                for item in movement.items
-            ]
-            salary_rows = [
-                {
-                    "movement_id": movement.external_id,
-                    "employee_id": employee_map[normalize_entity_name(salary.employee_name)],
-                    "subtotal": salary.subtotal,
-                }
-                for salary in movement.salaries
-            ]
-            client_payment_rows = [
-                SyncService._build_sync_full_movement_client_payment_row(
-                    movement=movement,
-                    client_payment=client_payment,
-                    client_id=client_map[normalize_entity_name(client_payment.client_name)],
-                )
-                for client_payment in movement.client_payments
-            ]
-            SyncService._replace_details_for_movement(
-                db,
-                movement.external_id,
-                item_rows=item_rows,
-                salary_rows=salary_rows,
-                client_payment_rows=client_payment_rows,
+        for movement_id, sheet_movement in sheet_map.items():
+            db_movement = db_all_map.get(movement_id)
+            sheet_snapshot = SyncService._build_sheet_snapshot(
+                movement=sheet_movement,
+                client_map=client_map,
+                product_map=product_map,
+                employee_map=employee_map,
             )
 
-        incoming_set = set(incoming_ids)
-        db_ids = {
-            existing.id
-            for existing in existing_rows
-            if existing.deleted_at is None and existing.source != "app-entrega"
+            if db_movement is None:
+                new_movement = Movement(
+                    id=movement_id,
+                    period_id=period_id,
+                    date=sheet_movement.date,
+                    type=MovementType(sheet_movement.type),
+                    amount=sheet_snapshot["amount"],
+                    description=sheet_movement.description,
+                    updated_at=sheet_movement.updated_at,
+                    source=sheet_movement.source,
+                    deleted_at=None,
+                )
+                db.add(new_movement)
+                SyncService._replace_details_for_movement(
+                    db,
+                    movement_id,
+                    item_rows=sheet_snapshot["item_rows"],
+                    salary_rows=sheet_snapshot["salary_rows"],
+                    client_payment_rows=sheet_snapshot["client_payment_rows"],
+                )
+                inserted_count += 1
+                continue
+
+            if SyncService._movement_equals_sheet_snapshot(db_movement, sheet_snapshot):
+                continue
+
+            db_movement.period_id = period_id
+            db_movement.date = sheet_movement.date
+            db_movement.type = MovementType(sheet_movement.type)
+            db_movement.amount = sheet_snapshot["amount"]
+            db_movement.description = sheet_movement.description
+            db_movement.updated_at = sheet_movement.updated_at
+            db_movement.source = sheet_movement.source
+            db_movement.deleted_at = None
+            SyncService._replace_details_for_movement(
+                db,
+                movement_id,
+                item_rows=sheet_snapshot["item_rows"],
+                salary_rows=sheet_snapshot["salary_rows"],
+                client_payment_rows=sheet_snapshot["client_payment_rows"],
+            )
+            updated_count += 1
+
+        to_delete = {
+            movement_id
+            for movement_id, db_movement in db_map.items()
+            if movement_id not in sheet_map and db_movement.source != "app-entrega"
         }
-        to_delete = db_ids - incoming_set
         print(f"[SYNC DELETE] {len(to_delete)} movements")
         for movement_id in to_delete:
             SyncService._soft_delete_movement_for_sync(db, movement_id, now_utc)
@@ -728,8 +723,8 @@ class SyncService:
             "period_id": period_id,
             "applied_from_sheet": {
                 "received": len(movement_list),
-                "inserted": applied_inserted,
-                "updated": applied_updated,
+                "inserted": inserted_count,
+                "updated": updated_count,
                 "deleted": deleted_count,
             },
             "db_changes_since_cursor": [
@@ -747,6 +742,96 @@ class SyncService:
                 for movement in db_changes
             ],
         }
+
+    @staticmethod
+    def _build_sheet_snapshot(
+        *,
+        movement,
+        client_map: dict[str, UUID],
+        product_map: dict[str, UUID],
+        employee_map: dict[str, UUID],
+    ) -> dict:
+        item_rows = [
+            SyncService._build_sync_full_movement_item_row(
+                movement=movement,
+                item=item,
+                client_id=client_map[normalize_entity_name(item.client_name)],
+                product_id=product_map[normalize_entity_name(item.product_name)],
+            )
+            for item in movement.items
+        ]
+        salary_rows = [
+            {
+                "movement_id": movement.external_id,
+                "employee_id": employee_map[normalize_entity_name(salary.employee_name)],
+                "subtotal": salary.subtotal,
+            }
+            for salary in movement.salaries
+        ]
+        client_payment_rows = [
+            SyncService._build_sync_full_movement_client_payment_row(
+                movement=movement,
+                client_payment=client_payment,
+                client_id=client_map[normalize_entity_name(client_payment.client_name)],
+            )
+            for client_payment in movement.client_payments
+        ]
+        return {
+            "type": MovementType(movement.type),
+            "date": movement.date,
+            "amount": SyncService._coerce_sync_full_movement_amount(movement),
+            "description": movement.description,
+            "source": movement.source,
+            "item_rows": item_rows,
+            "salary_rows": salary_rows,
+            "client_payment_rows": client_payment_rows,
+        }
+
+    @staticmethod
+    def _movement_equals_sheet_snapshot(db_movement: Movement, sheet_snapshot: dict) -> bool:
+        db_items = sorted(
+            [
+                (
+                    str(item.client_id),
+                    str(item.product_id),
+                    item.quantity,
+                    item.unit_price,
+                    item.subtotal,
+                )
+                for item in db_movement.items
+            ]
+        )
+        sheet_items = sorted(
+            [
+                (
+                    str(row["client_id"]),
+                    str(row["product_id"]),
+                    row["quantity"],
+                    row["unit_price"],
+                    row["subtotal"],
+                )
+                for row in sheet_snapshot["item_rows"]
+            ]
+        )
+        db_salaries = sorted([(str(salary.employee_id), salary.subtotal) for salary in db_movement.salaries])
+        sheet_salaries = sorted([(str(row["employee_id"]), row["subtotal"]) for row in sheet_snapshot["salary_rows"]])
+        db_client_payments = sorted(
+            [(str(payment.client_id), payment.subtotal) for payment in db_movement.client_payments]
+        )
+        sheet_client_payments = sorted(
+            [(str(row["client_id"]), row["subtotal"]) for row in sheet_snapshot["client_payment_rows"]]
+        )
+
+        return (
+            db_movement.date == sheet_snapshot["date"]
+            and db_movement.type == sheet_snapshot["type"]
+            and db_movement.amount == sheet_snapshot["amount"]
+            and (db_movement.description or "") == (sheet_snapshot["description"] or "")
+            and (db_movement.source or "") == (sheet_snapshot["source"] or "")
+            and db_items == sheet_items
+            and db_salaries == sheet_salaries
+            and db_client_payments == sheet_client_payments
+        )
 
     @staticmethod
     def _replace_details_for_movement(

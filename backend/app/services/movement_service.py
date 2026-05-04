@@ -23,6 +23,7 @@ from app.services.google_sheets_writer import (
     delete_movement_from_sheets,
     sync_movement_to_sheets,
     test_sheets,
+    update_movement_sheets,
 )
 from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
 from app.services.validation_service import ValidationService
@@ -140,6 +141,7 @@ class MovementService:
         movement = db.scalar(select(Movement).where(Movement.id == movement_id, Movement.deleted_at.is_(None)))
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
+        previous_period_id = movement.period_id
 
         movement_type = MovementType(data.type)
         items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
@@ -155,7 +157,30 @@ class MovementService:
 
         MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
         db.commit()
-        return MovementService.get_movement_by_id(db, movement.id)
+        movement = MovementService.get_movement_by_id(db, movement.id)
+
+        previous_sheet_id = MovementService._get_sheet_id_for_period_id(db, previous_period_id)
+        new_sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
+        if previous_sheet_id and previous_sheet_id != new_sheet_id:
+            try:
+                delete_movement_from_sheets(previous_sheet_id, str(movement.id))
+            except Exception:
+                logger.exception(
+                    "Failed to delete movement from previous Google Sheet on update. movement_id=%s period_id=%s",
+                    movement.id,
+                    previous_period_id,
+                )
+        if new_sheet_id:
+            try:
+                update_movement_sheets(new_sheet_id, movement)
+            except Exception:
+                logger.exception(
+                    "Failed to update movement in Google Sheets. movement_id=%s period_id=%s",
+                    movement.id,
+                    movement.period_id,
+                )
+
+        return movement
 
     @staticmethod
     def delete_movement(db: Session, movement_id: UUID) -> None:
