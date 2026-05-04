@@ -465,6 +465,19 @@ class SyncService:
         if client_payment_rows_to_insert:
             db.execute(pg_insert(MovementClientPayment).values(client_payment_rows_to_insert))
 
+        existing_active_rows = db.execute(
+            select(Movement.id, Movement.source).where(
+                Movement.period_id == period_id,
+                Movement.deleted_at.is_(None),
+            )
+        ).all()
+        sheet_ids = set(movement_ids)
+        db_ids = {movement_id for movement_id, source in existing_active_rows if source != "app-entrega"}
+        to_delete = db_ids - sheet_ids
+        print(f"[SYNC DELETE] {len(to_delete)} movements")
+        for movement_id in to_delete:
+            SyncService._soft_delete_movement_for_sync(db, movement_id, now_utc)
+
         inserted_movements = len([movement_id for movement_id in movement_ids if movement_id not in existing_in_period])
         updated_movements = len(movement_ids) - inserted_movements
         SyncService._logger.info(
@@ -483,7 +496,7 @@ class SyncService:
                 "received": len(movement_list),
                 "inserted": inserted_movements,
                 "updated": updated_movements,
-                "deleted": 0,
+                "deleted": len(to_delete),
             },
             "movement_items": {
                 "received": total_items_received,
@@ -689,18 +702,16 @@ class SyncService:
             )
 
         incoming_set = set(incoming_ids)
-        deleted_count = 0
-        for existing in existing_rows:
-            if existing.deleted_at is not None:
-                continue
-            if existing.source != "sheet":
-                continue
-            if existing.id in incoming_set:
-                continue
-            existing.deleted_at = now_utc
-            existing.updated_at = now_utc
-            existing.source = "sheet"
-            deleted_count += 1
+        db_ids = {
+            existing.id
+            for existing in existing_rows
+            if existing.deleted_at is None and existing.source != "app-entrega"
+        }
+        to_delete = db_ids - incoming_set
+        print(f"[SYNC DELETE] {len(to_delete)} movements")
+        for movement_id in to_delete:
+            SyncService._soft_delete_movement_for_sync(db, movement_id, now_utc)
+        deleted_count = len(to_delete)
 
         if since is None:
             db_changes = []
@@ -755,6 +766,17 @@ class SyncService:
             db.execute(pg_insert(MovementSalary).values(salary_rows))
         if client_payment_rows:
             db.execute(pg_insert(MovementClientPayment).values(client_payment_rows))
+
+    @staticmethod
+    def _soft_delete_movement_for_sync(db: Session, movement_id: UUID, deleted_at: datetime) -> None:
+        movement = db.get(Movement, movement_id)
+        if movement is None or movement.deleted_at is not None:
+            return
+        if movement.source == "app-entrega":
+            return
+        movement.deleted_at = deleted_at
+        movement.updated_at = deleted_at
+        movement.source = "sheet"
 
     @staticmethod
     def _coerce_sync_full_movement_amount(movement) -> Decimal:

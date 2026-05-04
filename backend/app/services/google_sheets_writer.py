@@ -14,12 +14,18 @@ from app.models.movement_item import MovementItem
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 DELETE_MOVEMENT_SHEETS = [
     "MOVEMENTS",
+    "ITEMS",
+    "SALARIES",
+    "CLIENT_PAYMENTS",
     "CUENTAS",
     "SUELDOS",
     "GASTOS",
 ]
 MOVEMENT_ID_COLUMN_BY_SHEET = {
     "MOVEMENTS": 0,
+    "ITEMS": 0,
+    "SALARIES": 0,
+    "CLIENT_PAYMENTS": 0,
     "CUENTAS": 9,
     "SUELDOS": 5,
     "GASTOS": 3,
@@ -188,6 +194,10 @@ def append_salaries_to_sheet(sheet_id: str, movement: Movement) -> None:
         ).execute()
 
 
+def append_salaries(sheet_id: str, movement: Movement) -> None:
+    append_salaries_to_sheet(sheet_id, movement)
+
+
 def append_gasto_to_sheet(sheet_id: str, movement: Movement) -> None:
     values = [[
         str(movement.date),
@@ -207,6 +217,9 @@ def append_gasto_to_sheet(sheet_id: str, movement: Movement) -> None:
 
 def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
     append_movement(sheet_id, movement)
+    append_items(sheet_id, list(movement.items or []))
+    append_salaries(sheet_id, movement)
+    append_client_payments(sheet_id, list(movement.client_payments or []))
 
     movement_type = movement.type.value
     if movement_type in ("compra", "venta"):
@@ -217,8 +230,6 @@ def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
         append_salaries_to_sheet(sheet_id, movement)
     if movement_type == "gasto":
         append_gasto_to_sheet(sheet_id, movement)
-
-    print(f"[SHEETS WRITE] movement_id={movement.id}")
 
 
 def get_sheet_gid(service, sheet_id: str, sheet_name: str) -> int:
@@ -285,12 +296,14 @@ def delete_rows(service, sheet_id: str, sheet_name: str, row_indexes: list[int])
 
 def delete_movement_from_sheets(sheet_id: str, movement_id: str) -> None:
     service = get_sheets_service()
-    print(f"[SHEETS DELETE] movement_id={movement_id}")
 
     for sheet_name in DELETE_MOVEMENT_SHEETS:
-        id_col = MOVEMENT_ID_COLUMN_BY_SHEET.get(sheet_name, 0)
-        rows = find_rows_by_movement_id(service, sheet_id, sheet_name, movement_id, id_col)
-        delete_rows(service, sheet_id, sheet_name, rows)
+        try:
+            id_col = MOVEMENT_ID_COLUMN_BY_SHEET.get(sheet_name, 0)
+            rows = find_rows_by_movement_id(service, sheet_id, sheet_name, movement_id, id_col)
+            delete_rows(service, sheet_id, sheet_name, rows)
+        except Exception as exc:
+            print(f"[SHEETS DELETE SKIP] sheet={sheet_name} movement_id={movement_id} error={exc}")
 
 
 def test_sheets(sheet_id: str) -> None:
@@ -371,7 +384,6 @@ def _upsert_product_quantity(
 
     header = values[0] if values else []
     target_date = _normalize_date_key(movement_date)
-    print(f"[SHEETS DEBUG] buscando fecha {target_date} en {sheet_name}")
 
     col_index = None
     for i, cell in enumerate(header):

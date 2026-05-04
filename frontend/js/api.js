@@ -550,7 +550,7 @@ function apiLoginWithGoogle(idToken) {
     }
   }).then(function(resp) {
     var token = String(resp && resp.access_token || '').trim();
-    if (!token) throw new Error('Respuesta de login inválida');
+    if (!token) throw new Error('Respuesta de login invï¿½lida');
     return { access_token: token };
   });
 }
