@@ -1,10 +1,11 @@
 import type { ApiErrorPayload } from "../types/api";
 
-const API_BASE_URL = "https://gdiario.azurewebsites.net/api";
+const API_URL = (import.meta.env.VITE_API_URL || "https://gdiario.azurewebsites.net")
+  .trim()
+  .replace(/\/$/, "");
+const API_BASE_URL = `${API_URL}/api`;
 
-if (!API_BASE_URL) {
-  throw new Error("Missing NEXT_PUBLIC_API_URL environment variable");
-}
+console.log("API_URL:", API_URL);
 
 export class ApiError extends Error {
   status: number;

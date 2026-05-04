@@ -1,6 +1,9 @@
-const API_BASE_URL = String(
-  window.API_URL || window.NEXT_PUBLIC_API_URL || "https://gdiario.azurewebsites.net/api"
+const API_URL = String(
+  window.API_URL || window.NEXT_PUBLIC_API_URL || "https://gdiario.azurewebsites.net"
 ).trim().replace(/\/$/, "");
+const API_BASE_URL = API_URL + "/api";
+
+console.log("API_URL:", API_URL);
 
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -686,6 +689,7 @@ function api(action, data) {
 window.apiLoginWithGoogle = apiLoginWithGoogle;
 window.fetchConAuth = fetchConAuth;
 window.api = api;
+window.API_URL = API_URL;
 window.API_BASE_URL = API_BASE_URL;
 window.isValidUUID = isValidUUID;
 
