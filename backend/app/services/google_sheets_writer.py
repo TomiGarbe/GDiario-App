@@ -36,11 +36,28 @@ MOVEMENT_ID_COLUMN_BY_SHEET = {
 @lru_cache(maxsize=1)
 def get_google_credentials():
     settings = get_settings()
-    print("GOOGLE CREDS OK:", bool(settings.google_credentials_json))
+    raw = settings.google_credentials_json
+
+    print("==== GOOGLE CREDS DEBUG ====")
+    print("TYPE:", type(raw))
+    print("LENGTH:", len(raw) if raw else 0)
+    print("START:", raw[:200] if raw else None)
+    print("============================")
+
+    if not raw:
+        raise RuntimeError("GOOGLE_CREDENTIALS_JSON vacio")
+
     try:
-        creds_dict = json.loads(settings.google_credentials_json)
+        creds_dict = json.loads(raw)
+        print("JSON OK (directo)")
     except Exception as exc:
-        raise RuntimeError("Invalid GOOGLE_CREDENTIALS_JSON") from exc
+        print("JSON ERROR (directo):", str(exc))
+        try:
+            creds_dict = json.loads(json.loads(raw))
+            print("JSON OK (doble parseo)")
+        except Exception as exc2:
+            print("JSON ERROR (doble):", str(exc2))
+            raise RuntimeError("Invalid GOOGLE_CREDENTIALS_JSON") from exc2
 
     return service_account.Credentials.from_service_account_info(
         creds_dict,
@@ -319,14 +336,9 @@ def delete_movement_from_sheets(sheet_id: str, movement_id: str) -> None:
 
 def test_sheets(sheet_id: str) -> None:
     service = get_sheets_service()
-    test_values = [["TEST", "debug", "manual"]]
     try:
-        service.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range="MOVEMENTS!A:C",
-            valueInputOption="RAW",
-            body={"values": test_values},
-        ).execute()
+        service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+        print("SHEETS OK")
     except Exception as e:
         print(f"[ERROR] {str(e)}")
         raise
