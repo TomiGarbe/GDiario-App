@@ -1,6 +1,6 @@
 import type { ApiErrorPayload } from "../types/api";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_BASE_URL = "https://gdiario.azurewebsites.net/api";
 
 if (!API_BASE_URL) {
   throw new Error("Missing NEXT_PUBLIC_API_URL environment variable");
