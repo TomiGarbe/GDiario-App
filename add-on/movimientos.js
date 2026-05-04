@@ -22,7 +22,6 @@ const FILAS_EXCLUIDAS_POR_HOJA = {
 function calcularMovimientos(ss) {
   const hojaPrecios = ss.getSheetByName("PRECIOS");
   const preciosData = hojaPrecios ? hojaPrecios.getDataRange().getValues().slice(1) : [];
-  const priceRows = _buildNormalizedPriceRows(preciosData);
 
   const hojasOrigen = [
     { nombre: 'GRASA',  producto: 'Grasa',  tipo: 'Compra', colInicio: 2 },
@@ -41,7 +40,7 @@ function calcularMovimientos(ss) {
     let aserrinCordiez = 0;
 
     filas.forEach(fila => {
-      const cliente = normalizeName(fila[0]);
+      const cliente = String(fila[0] === null || fila[0] === undefined ? "" : fila[0]).trim();
       const clienteUpper = String(cliente || "").toUpperCase();
       if (!cliente || esFilaExcluidaPorHoja(cliente, cfg.nombre)) {
         if (cliente) Logger.log("Fila ignorada: " + cliente);
@@ -56,21 +55,16 @@ function calcularMovimientos(ss) {
         aserrinCordiez = 1;
         producto = "Aserrin de hueso";
       }
-      producto = normalizeName(producto);
+      producto = String(producto === null || producto === undefined ? "" : producto).trim();
 
       for (let col = cfg.colInicio; col < fechas.length - 2; col++) {
         const fecha = fechas[col];
         const cantidad = fila[col];
         if (!fecha || !cantidad || cantidad === 0) continue;
 
-        const precio = resolveUnitPrice({
-          prices: priceRows,
-          client_name: cliente,
-          product_name: producto,
-          date: fecha
-        });
+        const precio = obtenerPrecio(preciosData, cliente, producto, fecha);
         if (!Number.isFinite(precio) || precio <= 0) {
-          throw new Error(`Missing price for client ${cliente}, product ${producto}, date ${_toDateKeyCompat(fecha)}`);
+          throw new Error(`Missing price for client ${cliente}, product ${producto}`);
         }
         const debe  = tipo === "Compra" ? precio * cantidad : 0;
         const haber = tipo === "Venta"  ? precio * cantidad : 0;
@@ -111,75 +105,6 @@ function esFilaExcluidaPorHoja(nombre, hojaNombre) {
   const hojaKey = String(hojaNombre || "").toUpperCase();
   const lista = FILAS_EXCLUIDAS_POR_HOJA[hojaKey] || FILAS_EXCLUIDAS;
   return lista.indexOf(key) !== -1;
-}
-
-function _toDateKeyCompat(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (isNaN(date.getTime())) return "";
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
-}
-
-function _buildPriceIndexKey(clientName, productName) {
-  return `${String(clientName || "").trim().toLowerCase()}|${String(productName || "").trim().toLowerCase()}`;
-}
-
-// PRECIOS -> índice normalizado por cliente/producto para lookup rápido por fecha.
-function _buildNormalizedPriceRows(preciosData) {
-  const priceIndex = {};
-
-  (preciosData || []).forEach((fila) => {
-    const clientName = normalizeName(fila && fila[0]);
-    const productName = normalizeName(fila && fila[1]);
-    const startDate = fila && fila[2] instanceof Date ? fila[2] : new Date(fila && fila[2]);
-    const price = parseNumber(fila && fila[3]);
-
-    if (!clientName || !productName) return;
-    if (isNaN(startDate.getTime())) return;
-    if (!Number.isFinite(price) || price < 0) return;
-
-    const key = _buildPriceIndexKey(clientName, productName);
-    if (!priceIndex[key]) priceIndex[key] = [];
-    priceIndex[key].push({
-      start_date: new Date(startDate),
-      price: price
-    });
-  });
-
-  Object.keys(priceIndex).forEach((key) => {
-    priceIndex[key].sort((a, b) => a.start_date.getTime() - b.start_date.getTime());
-  });
-
-  return priceIndex;
-}
-
-function resolveUnitPrice(args) {
-  const prices = (args && args.prices) || {};
-  const clientName = normalizeName(args && args.client_name);
-  const productName = normalizeName(args && args.product_name);
-  const movementDate = args && args.date instanceof Date ? args.date : new Date(args && args.date);
-
-  if (!clientName || !productName || isNaN(movementDate.getTime())) return null;
-
-  const key = _buildPriceIndexKey(clientName, productName);
-  const priceRows = prices[key];
-  if (!Array.isArray(priceRows) || priceRows.length === 0) return null;
-
-  const movementDateKey = _toDateKeyCompat(movementDate);
-  let selectedPrice = null;
-
-  for (let i = 0; i < priceRows.length; i++) {
-    const row = priceRows[i];
-    if (!row || !(row.start_date instanceof Date) || isNaN(row.start_date.getTime())) continue;
-
-    const startDateKey = _toDateKeyCompat(row.start_date);
-    if (startDateKey && startDateKey <= movementDateKey) {
-      selectedPrice = row;
-      continue;
-    }
-    break;
-  }
-
-  return selectedPrice ? selectedPrice.price : null;
 }
 
 // Devuelve el precio vigente para (cliente, producto, fecha), tomando el más reciente <= fecha
