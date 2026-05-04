@@ -3,14 +3,21 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
+from sqlalchemy import func, select
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
+from app.core.db import SessionLocal
 from app.core.config import get_settings
+from app.models.client import Client
 from app.models.movement import Movement
 from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
+from app.models.product import Product
 
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 DELETE_MOVEMENT_SHEETS = [
@@ -128,18 +135,20 @@ def append_items_to_product_sheets(sheet_id: str, movement: Movement) -> None:
         return
 
     service = get_sheets_service()
+    touched: set[tuple[date, str, str]] = set()
     for item in movement.items:
         product_name = (item.product.name or "").strip().upper()
         if product_name not in {"GRASA", "HUESOS"}:
             continue
-
-        _upsert_product_quantity(
+        touched.add((movement.date, item.client.name, product_name))
+    for movement_date, client_name, product_name in touched:
+        _recalculate_product_quantity(
             service=service,
             spreadsheet_id=sheet_id,
             sheet_name=product_name,
-            movement_date=movement.date,
-            client_name=item.client.name,
-            quantity=float(item.quantity),
+            movement_date=movement_date,
+            client_name=client_name,
+            period_id=movement.period_id,
         )
 
 
@@ -255,8 +264,16 @@ def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
         append_gasto_to_sheet(sheet_id, movement)
 
 
-def update_movement_sheets(sheet_id: str, movement: Movement) -> None:
-    delete_movement_from_sheets(sheet_id, str(movement.id))
+def update_movement_sheets(
+    sheet_id: str,
+    movement: Movement,
+    previous_product_cells: set[tuple[date, str, str]] | None = None,
+) -> None:
+    delete_movement_from_sheets(
+        sheet_id,
+        str(movement.id),
+        recalculate_product_cells=previous_product_cells,
+    )
     sync_movement_to_sheets(sheet_id, movement)
 
 
@@ -322,7 +339,11 @@ def delete_rows(service, sheet_id: str, sheet_name: str, row_indexes: list[int])
     ).execute()
 
 
-def delete_movement_from_sheets(sheet_id: str, movement_id: str) -> None:
+def delete_movement_from_sheets(
+    sheet_id: str,
+    movement_id: str,
+    recalculate_product_cells: set[tuple[date, str, str]] | None = None,
+) -> None:
     service = get_sheets_service()
 
     for sheet_name in DELETE_MOVEMENT_SHEETS:
@@ -332,6 +353,22 @@ def delete_movement_from_sheets(sheet_id: str, movement_id: str) -> None:
             delete_rows(service, sheet_id, sheet_name, rows)
         except Exception as exc:
             print(f"[SHEETS DELETE SKIP] sheet={sheet_name} movement_id={movement_id} error={exc}")
+
+    touched = recalculate_product_cells or _load_product_cells_for_movement(UUID(movement_id))
+    period_id = _load_period_id_for_movement(UUID(movement_id))
+    if period_id is None:
+        return
+    for movement_date, client_name, product_name in touched:
+        if product_name not in {"GRASA", "HUESOS"}:
+            continue
+        _recalculate_product_quantity(
+            service=service,
+            spreadsheet_id=sheet_id,
+            sheet_name=product_name,
+            movement_date=movement_date,
+            client_name=client_name,
+            period_id=period_id,
+        )
 
 
 def test_sheets(sheet_id: str) -> None:
@@ -389,13 +426,13 @@ def _parse_float(value) -> float:
         return 0.0
 
 
-def _upsert_product_quantity(
+def _recalculate_product_quantity(
     service,
     spreadsheet_id: str,
     sheet_name: str,
     movement_date,
     client_name: str,
-    quantity: float,
+    period_id: int,
 ) -> None:
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
@@ -430,16 +467,82 @@ def _upsert_product_quantity(
         return
 
     col_letter = _to_col_letter(col_index)
-    cell_result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id,
-        range=f"{sheet_name}!{col_letter}{row_index}",
-    ).execute()
-    current_raw = cell_result.get("values", [[]])[0][0] if cell_result.get("values") else ""
-    new_value = _parse_float(current_raw) + float(quantity)
+    total_quantity = _sum_active_quantity_from_db(
+        period_id=period_id,
+        movement_date=movement_date,
+        client_name=client_name,
+        product_name=sheet_name,
+    )
+
+    cell_ref = f"{sheet_name}!{col_letter}{row_index}"
+    if total_quantity == Decimal("0"):
+        service.spreadsheets().values().clear(
+            spreadsheetId=spreadsheet_id,
+            range=cell_ref,
+            body={},
+        ).execute()
+        return
 
     service.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
-        range=f"{sheet_name}!{col_letter}{row_index}",
+        range=cell_ref,
         valueInputOption="USER_ENTERED",
-        body={"values": [[new_value]]},
+        body={"values": [[float(total_quantity)]]},
     ).execute()
+
+
+def _sum_active_quantity_from_db(
+    *,
+    period_id: int,
+    movement_date,
+    client_name: str,
+    product_name: str,
+) -> Decimal:
+    db = SessionLocal()
+    try:
+        normalized_client = str(client_name or "").strip().lower()
+        normalized_product = str(product_name or "").strip().lower()
+        total = db.execute(
+            select(func.coalesce(func.sum(MovementItem.quantity), 0))
+            .select_from(MovementItem)
+            .join(Movement, Movement.id == MovementItem.movement_id)
+            .join(Client, Client.id == MovementItem.client_id)
+            .join(Product, Product.id == MovementItem.product_id)
+            .where(
+                Movement.deleted_at.is_(None),
+                Movement.period_id == period_id,
+                Movement.date == movement_date,
+                func.lower(func.trim(Client.name)) == normalized_client,
+                func.lower(func.trim(Product.name)) == normalized_product,
+            )
+        ).scalar_one()
+        return Decimal(total or 0)
+    finally:
+        db.close()
+
+
+def _load_product_cells_for_movement(movement_id: UUID) -> set[tuple[date, str, str]]:
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            select(Movement.date, Client.name, Product.name)
+            .select_from(MovementItem)
+            .join(Movement, Movement.id == MovementItem.movement_id)
+            .join(Client, Client.id == MovementItem.client_id)
+            .join(Product, Product.id == MovementItem.product_id)
+            .where(MovementItem.movement_id == movement_id)
+        ).all()
+        return {
+            (movement_date, client_name, str(product_name or "").strip().upper())
+            for movement_date, client_name, product_name in rows
+        }
+    finally:
+        db.close()
+
+
+def _load_period_id_for_movement(movement_id: UUID) -> int | None:
+    db = SessionLocal()
+    try:
+        return db.execute(select(Movement.period_id).where(Movement.id == movement_id)).scalar_one_or_none()
+    finally:
+        db.close()

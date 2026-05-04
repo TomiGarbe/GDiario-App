@@ -38,6 +38,16 @@ class MovementNotFoundError(Exception):
 
 class MovementService:
     @staticmethod
+    def _extract_product_cells(movement: Movement) -> set[tuple]:
+        cells: set[tuple] = set()
+        for item in movement.items or []:
+            product_name = (item.product.name or "").strip().upper()
+            if product_name not in {"GRASA", "HUESOS"}:
+                continue
+            cells.add((movement.date, item.client.name, product_name))
+        return cells
+
+    @staticmethod
     def _validate_no_duplicate_client_movement(
         db: Session,
         movement_type: MovementType,
@@ -138,10 +148,18 @@ class MovementService:
 
     @staticmethod
     def update_movement(db: Session, movement_id: UUID, data: MovementUpdate) -> Movement:
-        movement = db.scalar(select(Movement).where(Movement.id == movement_id, Movement.deleted_at.is_(None)))
+        movement = db.scalar(
+            select(Movement)
+            .where(Movement.id == movement_id, Movement.deleted_at.is_(None))
+            .options(
+                selectinload(Movement.items).selectinload(MovementItem.client),
+                selectinload(Movement.items).selectinload(MovementItem.product),
+            )
+        )
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
         previous_period_id = movement.period_id
+        previous_product_cells = MovementService._extract_product_cells(movement)
 
         movement_type = MovementType(data.type)
         items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
@@ -163,7 +181,11 @@ class MovementService:
         new_sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
         if previous_sheet_id and previous_sheet_id != new_sheet_id:
             try:
-                delete_movement_from_sheets(previous_sheet_id, str(movement.id))
+                delete_movement_from_sheets(
+                    previous_sheet_id,
+                    str(movement.id),
+                    recalculate_product_cells=previous_product_cells,
+                )
             except Exception:
                 logger.exception(
                     "Failed to delete movement from previous Google Sheet on update. movement_id=%s period_id=%s",
@@ -172,7 +194,11 @@ class MovementService:
                 )
         if new_sheet_id:
             try:
-                update_movement_sheets(new_sheet_id, movement)
+                update_movement_sheets(
+                    new_sheet_id,
+                    movement,
+                    previous_product_cells=previous_product_cells if previous_sheet_id == new_sheet_id else None,
+                )
             except Exception:
                 logger.exception(
                     "Failed to update movement in Google Sheets. movement_id=%s period_id=%s",
@@ -184,9 +210,17 @@ class MovementService:
 
     @staticmethod
     def delete_movement(db: Session, movement_id: UUID) -> None:
-        movement = db.scalar(select(Movement).where(Movement.id == movement_id, Movement.deleted_at.is_(None)))
+        movement = db.scalar(
+            select(Movement)
+            .where(Movement.id == movement_id, Movement.deleted_at.is_(None))
+            .options(
+                selectinload(Movement.items).selectinload(MovementItem.client),
+                selectinload(Movement.items).selectinload(MovementItem.product),
+            )
+        )
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
+        product_cells = MovementService._extract_product_cells(movement)
         period_id = movement.period_id
         movement.deleted_at = datetime.now(timezone.utc)
         movement.updated_at = movement.deleted_at
@@ -196,7 +230,11 @@ class MovementService:
         sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
         if sheet_id:
             try:
-                delete_movement_from_sheets(sheet_id, str(movement_id))
+                delete_movement_from_sheets(
+                    sheet_id,
+                    str(movement_id),
+                    recalculate_product_cells=product_cells,
+                )
             except Exception:
                 logger.exception(
                     "Failed to delete movement from Google Sheets. movement_id=%s period_id=%s",

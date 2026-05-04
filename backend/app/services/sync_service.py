@@ -678,7 +678,7 @@ class SyncService:
                 inserted_count += 1
                 continue
 
-            if SyncService._movement_equals_sheet_snapshot(db_movement, sheet_snapshot):
+            if db_movement.deleted_at is None and SyncService._movement_equals_sheet_snapshot(db_movement, sheet_snapshot):
                 continue
 
             db_movement.period_id = period_id
@@ -826,10 +826,7 @@ class SyncService:
             db_movement.date == sheet_snapshot["date"]
             and db_movement.type == sheet_snapshot["type"]
             and db_movement.amount == sheet_snapshot["amount"]
-            and (db_movement.description or "") == (sheet_snapshot["description"] or "")
-            and (db_movement.source or "") == (sheet_snapshot["source"] or "")
             and db_items == sheet_items
-            and db_salaries == sheet_salaries
             and db_client_payments == sheet_client_payments
         )
 
