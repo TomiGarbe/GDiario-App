@@ -43,12 +43,6 @@ class SyncService:
             stmt = pg_insert(Client).values([{"name": name} for name in missing])
             result = db.execute(stmt.on_conflict_do_nothing(index_elements=[func.lower(Client.name)]))
             created = int(result.rowcount or 0)
-        SyncService._logger.info(
-            "sync_clients processed=%s unique=%s created=%s",
-            len(normalized_names),
-            len(unique_names),
-            created,
-        )
         return len(normalized_names), created, len(unique_names) - created
 
     @staticmethod
@@ -57,17 +51,10 @@ class SyncService:
         if not price_list:
             return 0, 0
 
-        SyncService._logger.info(
-            "sync_prices incoming client/product pairs=%s",
-            [(getattr(p, "client_name", None), getattr(p, "product_name", None)) for p in price_list[:20]],
-        )
-
         deduped: dict[tuple[str, str, date], object] = {}
-        product_lookup_pairs: dict[str, str] = {}
         for row in price_list:
             client_name = normalize_entity_name(row.client_name)
             product_name = normalize_entity_name(row.product_name)
-            product_lookup_pairs[str(row.product_name)] = product_name
             key = (client_name, product_name, row.start_date)
             deduped[key] = row
 
@@ -75,15 +62,6 @@ class SyncService:
         product_names = sorted({k[1] for k in deduped})
         client_map = SyncService._load_entity_map(db, Client)
         product_map = SyncService._load_entity_map(db, Product)
-        SyncService._logger.info("sync_prices loaded clients=%s products=%s", len(client_map), len(product_map))
-        for raw_product_name, normalized_product_name in product_lookup_pairs.items():
-            SyncService._logger.info(
-                "Looking for product: '%s' -> '%s'",
-                raw_product_name,
-                normalized_product_name,
-            )
-        SyncService._logger.info("Available products: %s", list(product_map.keys()))
-
         missing_clients = sorted(name for name in client_names if name not in client_map)
         missing_products = sorted(name for name in product_names if name not in product_map)
         if missing_clients:
@@ -97,7 +75,6 @@ class SyncService:
                 raise ValueError("Invalid price")
             coerced_price, was_overridden = coerce_zero_if_special_client(client_name, item.price)
             if es_cliente_sin_monto(client_name):
-                SyncService._logger.info("Cliente sin monto detectado: %s", client_name)
                 if was_overridden:
                     SyncService._logger.warning(
                         "Precio > 0 recibido para cliente sin monto. client=%s product=%s incoming=%s -> 0",
@@ -120,9 +97,6 @@ class SyncService:
                 constraint="uq_prices_client_product_start_date",
                 set_={"price": stmt.excluded.price},
             )
-        )
-        SyncService._logger.info(
-            "sync_prices processed=%s deduped=%s", len(price_list), len(rows)
         )
         return len(price_list), len(rows)
 
@@ -271,7 +245,6 @@ class SyncService:
         period_id = SyncService._ensure_period_and_get_movement_period_id(db, period, sheet_id=sheet_id)
         movement_list = list(movements)
         if not movement_list:
-            SyncService._logger.info("sync_full period=%s/%s with zero movements", period.year, period.month)
             return {
                 "period_id": period_id,
                 "movements": {"received": 0, "inserted": 0, "updated": 0, "deleted": 0},
@@ -380,15 +353,6 @@ class SyncService:
         client_map = SyncService._load_entity_map(db, Client)
         product_map = SyncService._load_entity_map(db, Product)
         employee_map = SyncService._load_entity_map(db, Employee)
-        SyncService._logger.info(
-            "sync_full loaded entity maps clients=%s products=%s employees=%s",
-            len(client_map),
-            len(product_map),
-            len(employee_map),
-        )
-        SyncService._logger.info("sync_full incoming product keys=%s", sorted(product_names))
-        SyncService._logger.info("sync_full db product keys sample=%s", list(product_map.keys())[:30])
-
         missing_clients = sorted(name for name in client_names if name not in client_map)
         missing_products = sorted(name for name in product_names if name not in product_map)
         missing_employees = sorted(name for name in employee_names if name not in employee_map)
@@ -566,8 +530,9 @@ class SyncService:
             db.flush()
         elif clean_sheet_id:
             record.sheet_id = clean_sheet_id
-        print(f"[SYNC] Period {period.year * 100 + period.month} -> sheet_id={clean_sheet_id}")
-        return period.year * 100 + period.month
+        period_id = period.year * 100 + period.month
+        print(f"[SYNC] period_id={period_id}")
+        return period_id
 
     @staticmethod
     def _validate_numeric_precision(value: Decimal, precision: int, scale: int, field_name: str) -> None:
@@ -804,8 +769,6 @@ class SyncService:
                         movement.external_id,
                         movement.amount,
                     )
-                for client_name in normalized_clients:
-                    SyncService._logger.info("Cliente sin monto detectado: %s", client_name)
                 return ZERO
             return sum((item.subtotal for item in movement.items), ZERO)
 
@@ -823,7 +786,6 @@ class SyncService:
         unit_price, unit_price_overridden = coerce_zero_if_special_client(normalized_client_name, item.unit_price)
         subtotal, subtotal_overridden = coerce_zero_if_special_client(normalized_client_name, item.subtotal)
         if es_cliente_sin_monto(normalized_client_name):
-            SyncService._logger.info("Cliente sin monto detectado: %s", normalized_client_name)
             if unit_price_overridden or subtotal_overridden:
                 SyncService._logger.warning(
                     "Item con monto > 0 para cliente sin monto. movement_id=%s client=%s unit_price=%s subtotal=%s -> 0",
@@ -847,7 +809,6 @@ class SyncService:
         normalized_client_name = normalize_entity_name(item.client_name)
         subtotal, subtotal_overridden = coerce_zero_if_special_client(normalized_client_name, item.subtotal)
         if es_cliente_sin_monto(normalized_client_name):
-            SyncService._logger.info("Cliente sin monto detectado: %s", normalized_client_name)
             if subtotal_overridden:
                 SyncService._logger.warning(
                     "Client payment con subtotal > 0 para cliente sin monto. movement_id=%s client=%s subtotal=%s -> 0",
@@ -868,7 +829,6 @@ class SyncService:
         unit_price, unit_price_overridden = coerce_zero_if_special_client(normalized_client_name, item.unit_price)
         subtotal, subtotal_overridden = coerce_zero_if_special_client(normalized_client_name, item.subtotal)
         if es_cliente_sin_monto(normalized_client_name):
-            SyncService._logger.info("Cliente sin monto detectado: %s", normalized_client_name)
             if unit_price_overridden or subtotal_overridden:
                 SyncService._logger.warning(
                     "Sync full item con monto > 0 para cliente sin monto. movement_id=%s client=%s unit_price=%s subtotal=%s -> 0",
@@ -891,7 +851,6 @@ class SyncService:
         normalized_client_name = normalize_entity_name(client_payment.client_name)
         subtotal, subtotal_overridden = coerce_zero_if_special_client(normalized_client_name, client_payment.subtotal)
         if es_cliente_sin_monto(normalized_client_name):
-            SyncService._logger.info("Cliente sin monto detectado: %s", normalized_client_name)
             if subtotal_overridden:
                 SyncService._logger.warning(
                     "Sync full client payment con subtotal > 0 para cliente sin monto. movement_id=%s client=%s subtotal=%s -> 0",

@@ -34,7 +34,6 @@ router = APIRouter(
 @router.post("/clients", response_model=SyncClientsResponse, status_code=status.HTTP_200_OK)
 def sync_clients(data: SyncClientsRequest, db: Session = Depends(get_db)) -> SyncClientsResponse:
     try:
-        print("SYNC CALLED")
         names = [item.name for item in data.clients]
         with db.begin():
             received, created, _ = SyncService.ensure_clients(db=db, names=names)
@@ -48,7 +47,6 @@ def sync_clients(data: SyncClientsRequest, db: Session = Depends(get_db)) -> Syn
 @router.post("/prices", response_model=SyncPricesResponse, status_code=status.HTTP_200_OK)
 def sync_prices(data: SyncPricesRequest, db: Session = Depends(get_db)) -> SyncPricesResponse:
     try:
-        print("SYNC CALLED")
         with db.begin():
             received, upserted = SyncService.upsert_prices(db=db, prices=data.prices)
         return SyncPricesResponse(received=received, upserted=upserted)
@@ -61,7 +59,6 @@ def sync_prices(data: SyncPricesRequest, db: Session = Depends(get_db)) -> SyncP
 @router.post("/movements", response_model=SyncBatchResult, status_code=status.HTTP_200_OK)
 def sync_movements(data: list[MovementSyncPayload], db: Session = Depends(get_db)) -> SyncBatchResult:
     try:
-        print("SYNC CALLED")
         with db.begin():
             received, inserted, updated = SyncService.sync_movements(db=db, movements=data)
         return SyncBatchResult(received=received, inserted=inserted, updated=updated, deleted=0)
@@ -74,7 +71,6 @@ def sync_movements(data: list[MovementSyncPayload], db: Session = Depends(get_db
 @router.post("/movement-items", response_model=SyncBatchResult, status_code=status.HTTP_200_OK)
 def sync_movement_items(data: list[MovementItemSyncPayload], db: Session = Depends(get_db)) -> SyncBatchResult:
     try:
-        print("SYNC CALLED")
         with db.begin():
             received, inserted, deleted = SyncService.sync_movement_items(db=db, items=data)
         return SyncBatchResult(received=received, inserted=inserted, updated=0, deleted=deleted)
@@ -87,7 +83,6 @@ def sync_movement_items(data: list[MovementItemSyncPayload], db: Session = Depen
 @router.post("/movement-salaries", response_model=SyncBatchResult, status_code=status.HTTP_200_OK)
 def sync_movement_salaries(data: list[MovementSalarySyncPayload], db: Session = Depends(get_db)) -> SyncBatchResult:
     try:
-        print("SYNC CALLED")
         with db.begin():
             received, inserted, deleted = SyncService.sync_movement_salaries(db=db, salaries=data)
         return SyncBatchResult(received=received, inserted=inserted, updated=0, deleted=deleted)
@@ -100,7 +95,6 @@ def sync_movement_salaries(data: list[MovementSalarySyncPayload], db: Session = 
 @router.post("/movement-client-payments", response_model=SyncBatchResult, status_code=status.HTTP_200_OK)
 def sync_movement_client_payments(data: list[MovementClientPaymentSyncPayload], db: Session = Depends(get_db)) -> SyncBatchResult:
     try:
-        print("SYNC CALLED")
         with db.begin():
             received, inserted, deleted = SyncService.sync_movement_client_payments(db=db, client_payments=data)
         return SyncBatchResult(received=received, inserted=inserted, updated=0, deleted=deleted)
@@ -113,8 +107,6 @@ def sync_movement_client_payments(data: list[MovementClientPaymentSyncPayload], 
 @router.post("/full", response_model=SyncFullResponse, status_code=status.HTTP_200_OK)
 def sync_full(data: SyncFullRequest, db: Session = Depends(get_db)) -> SyncFullResponse:
     try:
-        print("SYNC CALLED")
-        print("REBUILD CALLED")
         with db.begin():
             result = SyncService.sync_full(
                 db=db,

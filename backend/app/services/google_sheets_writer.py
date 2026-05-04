@@ -30,7 +30,6 @@ MOVEMENT_ID_COLUMN_BY_SHEET = {
 def get_sheets_service():
     settings = get_settings()
     credentials_file = settings.google_service_account_file
-    print("USANDO CREDENTIALS:", credentials_file)
     if not credentials_file:
         raise RuntimeError(
             "GOOGLE_SERVICE_ACCOUNT_FILE is not set. Define it in backend/.env"
@@ -54,18 +53,15 @@ def append_movement(sheet_id: str, movement: Movement) -> None:
         movement.updated_at.isoformat() if movement.updated_at else "",
         movement.source or "",
     ]]
-    print("SHEET_ID:", sheet_id)
-    print("APPEND MOVEMENT:", movement.id)
     try:
-        result = service.spreadsheets().values().append(
+        service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
             range="MOVEMENTS!A:G",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
-        print("GOOGLE RESPONSE:", result)
     except Exception as e:
-        print("GOOGLE ERROR:", str(e))
+        print(f"[ERROR] {str(e)}")
         raise
 
 
@@ -87,15 +83,14 @@ def append_items(sheet_id: str, items: list[MovementItem]) -> None:
     ]
 
     try:
-        result = service.spreadsheets().values().append(
+        service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
             range="ITEMS!A:F",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
-        print("GOOGLE RESPONSE:", result)
     except Exception as e:
-        print("GOOGLE ERROR:", str(e))
+        print(f"[ERROR] {str(e)}")
         raise
 
 
@@ -134,15 +129,14 @@ def append_client_payments(sheet_id: str, payments: list[MovementClientPayment])
     ]
 
     try:
-        result = service.spreadsheets().values().append(
+        service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
             range="CLIENT_PAYMENTS!A:C",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
-        print("GOOGLE RESPONSE:", result)
     except Exception as e:
-        print("GOOGLE ERROR:", str(e))
+        print(f"[ERROR] {str(e)}")
         raise
 
 
@@ -224,7 +218,7 @@ def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
     if movement_type == "gasto":
         append_gasto_to_sheet(sheet_id, movement)
 
-    print(f"[SHEETS WRITE] movement_id={movement.id} type={movement_type}")
+    print(f"[SHEETS WRITE] movement_id={movement.id}")
 
 
 def get_sheet_gid(service, sheet_id: str, sheet_name: str) -> int:
@@ -254,11 +248,9 @@ def find_rows_by_movement_id(
         if not row:
             continue
         if id_column_index >= len(row):
-            print(f"[DEBUG] Sheet={sheet_name} Row={i+1} ID=<missing>")
             continue
 
         row_id = str(row[id_column_index]).strip()
-        print(f"[DEBUG] Sheet={sheet_name} Row={i+1} ID={row_id}")
 
         if row_id == target:
             rows.append(i + 1)  # Sheets row index starts at 1
@@ -303,26 +295,24 @@ def delete_movement_from_sheets(sheet_id: str, movement_id: str) -> None:
 
 def test_sheets(sheet_id: str) -> None:
     service = get_sheets_service()
-    print("TEST SHEETS SHEET_ID:", sheet_id)
     test_values = [["TEST", "debug", "manual"]]
     try:
-        result = service.spreadsheets().values().append(
+        service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
             range="MOVEMENTS!A:C",
             valueInputOption="RAW",
             body={"values": test_values},
         ).execute()
-        print("GOOGLE RESPONSE:", result)
     except Exception as e:
-        print("GOOGLE ERROR:", str(e))
+        print(f"[ERROR] {str(e)}")
         raise
 
 
 def _normalize_date_key(value) -> str:
     if isinstance(value, datetime):
-        return value.date().isoformat()
+        return value.date().strftime("%d/%m/%Y")
     if isinstance(value, date):
-        return value.isoformat()
+        return value.strftime("%d/%m/%Y")
     text = str(value or "").strip()
     if not text:
         return ""
@@ -330,6 +320,13 @@ def _normalize_date_key(value) -> str:
         text = text.split("T", 1)[0]
     if " " in text:
         text = text.split(" ", 1)[0]
+
+    for pattern in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, pattern).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+
     return text
 
 
@@ -374,6 +371,7 @@ def _upsert_product_quantity(
 
     header = values[0] if values else []
     target_date = _normalize_date_key(movement_date)
+    print(f"[SHEETS DEBUG] buscando fecha {target_date} en {sheet_name}")
 
     col_index = None
     for i, cell in enumerate(header):
@@ -410,6 +408,3 @@ def _upsert_product_quantity(
         valueInputOption="USER_ENTERED",
         body={"values": [[new_value]]},
     ).execute()
-    print(
-        f"[SHEETS OK] {sheet_name} cliente={client_name} fecha={target_date} +{float(quantity)}"
-    )

@@ -237,7 +237,6 @@ function buildLegacyMovementCreate(item, fecha) {
       var price = (rawPrice == null || rawPrice === '')
         ? 0
         : Math.max(0, toNum(rawPrice));
-      console.log("PRECIO NORMALIZADO:", price);
       return {
         client: clientCompra,
         product: d && d.product ? String(d.product).trim() : '',
@@ -250,8 +249,6 @@ function buildLegacyMovementCreate(item, fecha) {
     });
 
     var amountCompra = compraItems.reduce(function(acc, it) { return acc + toNum(it.subtotal); }, 0);
-    console.log("ITEM FINAL:", compraItems);
-    console.log("AMOUNT FINAL:", amountCompra);
     if (!compraItems.length) {
       throw new Error('Compra invalida: faltan cliente/producto o cantidades');
     }
@@ -439,7 +436,6 @@ function request(path, opts) {
   var method = options.method || 'GET';
   var bodyPayload = options.body !== undefined ? options.body : undefined;
 
-  console.log('Request:', method, url, bodyPayload);
 
   var token = '';
   try {
@@ -467,10 +463,6 @@ function request(path, opts) {
     'Accept': 'application/json',
     'Content-Type': 'application/json'
   }, authHeaders, options.headers || {});
-  console.log("TOKEN:", localStorage.getItem('token'));
-  console.log("HEADERS:", headers);
-  console.log("REQUEST PATH:", path);
-  console.log("REQUEST URL:", url);
 
   return fetch(url, {
     method: method,
@@ -486,10 +478,6 @@ function request(path, opts) {
 
     return response.text().then(function(raw) {
       var txt = String(raw == null ? '' : raw).trim();
-      console.log('RESPONSE STATUS:', response.status);
-      console.log('RESPONSE OK:', response.ok);
-      console.log('RESPONSE BODY:', txt);
-      console.log('RAW RESPONSE:', txt);
 
       var payload = null;
       try {
@@ -502,7 +490,6 @@ function request(path, opts) {
         throw buildHttpError(response, payload, txt);
       }
 
-      console.log('Response:', payload);
       return payload;
     });
   }).catch(function(err) {

@@ -150,9 +150,6 @@ def get_movements(
 
 @router.post("/", response_model=MovementOut, status_code=status.HTTP_201_CREATED)
 def create_movement(payload: MovementCreate, db: Session = Depends(get_db)) -> MovementOut:
-    movement_data = payload.model_dump()
-    print("CREATE MOVEMENT CALLED")
-    print("DATA:", movement_data)
     try:
         movement = MovementService.create_movement(db, payload)
         if movement.type == MovementType.PAGO_CLIENTE:
@@ -303,8 +300,6 @@ def get_balance(db: Session = Depends(get_db)) -> BalanceOut:
             if hasattr(m.type, "value")
             else str(m.type).lower()
         )
-        print("TIPO:", tipo, "AMOUNT:", amount)
-
         if tipo == "entrega_dinero":
             balance += amount
         elif tipo == "venta":
@@ -312,8 +307,6 @@ def get_balance(db: Session = Depends(get_db)) -> BalanceOut:
         else:
             balance -= amount
 
-    print("TOTAL MOVEMENTS:", len(movements))
-    print("BALANCE:", balance)
     return {"balance": str(balance)}
 
 

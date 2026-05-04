@@ -234,7 +234,6 @@ function forceLogoutAndRedirect() {
 
 function checkAuthOrRedirect() {
   var token = getAuthToken();
-  console.log('TOKEN ACTUAL:', token);
 
   if (!token) {
     console.warn('No token -> redirect login');
@@ -286,6 +285,7 @@ window.mostrarPantallaApp = mostrarPantallaApp;
 window.getAuthToken = getAuthToken;
 window.checkAuthOrRedirect = checkAuthOrRedirect;
 window.forceLogoutAndRedirect = forceLogoutAndRedirect;
+
 
 
 

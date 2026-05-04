@@ -113,13 +113,9 @@ class MovementService:
         MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
         db.commit()
         movement = MovementService.get_movement_by_id(db, movement.id)
-        print("MOVEMENT CREATED:", movement.id)
-        print("ITEMS:", movement.items)
-        print("CLIENT PAYMENTS:", movement.client_payments)
+        print(f"[CREATE] movement_id={movement.id} type={movement.type.value}")
 
         sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
-        print("SHEET_ID:", sheet_id)
-        print("APPEND MOVEMENT:", movement.id)
         if sheet_id:
             try:
                 sync_movement_to_sheets(sheet_id, movement)
@@ -172,6 +168,7 @@ class MovementService:
         movement.updated_at = movement.deleted_at
         movement.source = "app"
         db.commit()
+        print(f"[DELETE] movement_id={movement_id}")
 
         sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
         if sheet_id:

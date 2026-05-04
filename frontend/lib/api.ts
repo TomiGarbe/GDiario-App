@@ -66,7 +66,6 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (response.status === 204) return undefined as T;
 
   const text = await response.text();
-  console.log("RAW RESPONSE:", text);
 
   let payload: unknown = undefined;
   try {

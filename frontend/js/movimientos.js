@@ -1111,54 +1111,9 @@ function validarCompraFueraDeFinDeSemana(payload) {
 }
 
 function guardar() {
-  console.log('CLICK guardarMovimiento');
-
-  var cards = Array.prototype.slice.call(document.querySelectorAll('.prod-card'));
-  var formSnapshot = cards.map(function(card, idx) {
-    var id = card.dataset.id || String(idx + 1);
-    var tipo = String(card.dataset.tipo || '').trim();
-    var clienteEl = document.getElementById('cs-val-' + id);
-    var cliente = clienteEl ? String(clienteEl.value || '').trim() : '';
-    var producto = '';
-    var cantidad = '';
-    var precio = '';
-
-    if (tipo === 'Compra') {
-      var item = card.querySelector('.compra-item');
-      if (item) {
-        var key = item.dataset.selKey || '';
-        producto = key && typeof csGetValue === 'function'
-          ? String(csGetValue(key) || '').trim()
-          : '';
-
-        var kgInp = item.querySelector('.compra-kg-inp');
-        cantidad = kgInp ? String(kgInp.value || '').trim() : '';
-      }
-    } else {
-      var prodEl = document.getElementById('prod-' + id);
-      var kgEl = document.getElementById('kg-' + id);
-      var precioEl = document.getElementById('precio-' + id);
-
-      producto = prodEl ? String(prodEl.value || '').trim() : '';
-      cantidad = kgEl ? String(kgEl.value || '').trim() : '';
-      precio = precioEl ? parsePrecio(precioEl.value) : 0;
-    }
-
-    return {
-      tipo: tipo,
-      fecha: document.getElementById('fecha') ? document.getElementById('fecha').value : '',
-      cliente: cliente,
-      producto: producto,
-      cantidad: cantidad,
-      precio: precio
-    };
-  });
-  console.log('FORM DATA:', formSnapshot);
-
   var payload;
   try {
     payload = construirPayloadMovimientosDesdeFormulario();
-    console.log('PAYLOAD FINAL:', payload);
   } catch (err) {
     console.error('ERROR GUARDAR MOVIMIENTO:', err);
     showToast(err && err.message ? err.message : 'Datos invalidos', 'error');
@@ -1166,15 +1121,13 @@ function guardar() {
   }
 
   if (!validarCompraFueraDeFinDeSemana(payload)) {
-    console.error('ERROR GUARDAR MOVIMIENTO: compra en fin de semana', payload);
+    console.error('ERROR GUARDAR MOVIMIENTO: compra en fin de semana');
     return;
   }
 
   var btnGuardar = document.getElementById('btnGuardar');
 
   ejecutarConLoading(function() {
-    console.log('ENVIANDO REQUEST...');
-    console.log("ENVIANDO MOVIMIENTO:", payload);
     return api('guardarMovimiento', payload);
   }, {
     boton: btnGuardar,
@@ -1199,7 +1152,6 @@ function guardar() {
     })
     .catch(function(err) {
       console.error('ERROR GUARDAR MOVIMIENTO:', err);
-      console.log('ERROR BACKEND:', err && err.response ? err.response.data : undefined);
 
       if (err && err.response && err.response.data && err.response.data.error === 'MOVEMENT_ALREADY_EXISTS') {
         var data = err.response.data;
