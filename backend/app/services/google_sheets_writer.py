@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from datetime import date, datetime
 
@@ -33,18 +34,23 @@ MOVEMENT_ID_COLUMN_BY_SHEET = {
 
 
 @lru_cache(maxsize=1)
-def get_sheets_service():
+def get_google_credentials():
     settings = get_settings()
-    credentials_file = settings.google_service_account_file
-    if not credentials_file:
-        raise RuntimeError(
-            "GOOGLE_SERVICE_ACCOUNT_FILE is not set. Define it in backend/.env"
-        )
+    print("GOOGLE CREDS OK:", bool(settings.google_credentials_json))
+    try:
+        creds_dict = json.loads(settings.google_credentials_json)
+    except Exception as exc:
+        raise RuntimeError("Invalid GOOGLE_CREDENTIALS_JSON") from exc
 
-    credentials = service_account.Credentials.from_service_account_file(
-        credentials_file,
+    return service_account.Credentials.from_service_account_info(
+        creds_dict,
         scopes=[SHEETS_SCOPE],
     )
+
+
+@lru_cache(maxsize=1)
+def get_sheets_service():
+    credentials = get_google_credentials()
     return build("sheets", "v4", credentials=credentials)
 
 

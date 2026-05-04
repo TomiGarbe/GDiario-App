@@ -19,7 +19,7 @@ class Settings:
     google_client_id: str
     allowed_emails: tuple[str, ...]
     sync_api_key: str
-    google_service_account_file: str
+    google_credentials_json: str
 
 
 @lru_cache
@@ -51,7 +51,7 @@ def get_settings() -> Settings:
     sync_api_key = os.getenv("SYNC_API_KEY", "").strip()
     if not sync_api_key:
         raise RuntimeError("SYNC_API_KEY is not set. Define it in backend/.env")
-    google_service_account_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
+    google_credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip()
 
     return Settings(
         database_url=database_url,
@@ -61,5 +61,5 @@ def get_settings() -> Settings:
         google_client_id=google_client_id,
         allowed_emails=allowed_emails,
         sync_api_key=sync_api_key,
-        google_service_account_file=google_service_account_file,
+        google_credentials_json=google_credentials_json,
     )
