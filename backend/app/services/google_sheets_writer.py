@@ -204,30 +204,127 @@ def append_client_payments_to_cuentas(sheet_id: str, movement: Movement) -> None
         ).execute()
 
 
-def append_salaries_to_sheet(sheet_id: str, movement: Movement) -> None:
-    if not movement.salaries:
+def _movement_type_key(movement: Movement) -> str:
+    raw_type = getattr(movement.type, "value", movement.type)
+    return str(raw_type or "").strip().lower()
+
+
+def _normalize_employee_name(value: str | None) -> str:
+    return str(value or "").strip().upper()
+
+
+def _extract_salary_employee_name(salary) -> str:
+    employee = getattr(salary, "employee", "")
+    if isinstance(employee, str):
+        return employee
+    return str(getattr(employee, "name", ""))
+
+
+def _extract_salary_amount(salary) -> float:
+    return float(getattr(salary, "subtotal", 0) or 0)
+
+
+def _update_sheet_row(service, sheet_id: str, sheet_name: str, row_index: int, row_values: list[object]) -> None:
+    end_col = _to_col_letter(len(row_values) - 1)
+    service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!A{row_index}:{end_col}{row_index}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [row_values]},
+    ).execute()
+
+
+def _append_sheet_row(service, sheet_id: str, sheet_name: str, row_values: list[object]) -> None:
+    end_col = _to_col_letter(len(row_values) - 1)
+    service.spreadsheets().values().append(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!A:{end_col}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [row_values]},
+    ).execute()
+
+
+def _upsert_salary_row(
+    service,
+    sheet_id: str,
+    sheet_name: str,
+    row_values: list[object],
+    movement_id: str,
+    employee_name: str,
+    movement_id_column_index: int,
+    employee_column_index: int,
+) -> None:
+    matches = find_rows_by_movement_id_and_employee(
+        service=service,
+        sheet_id=sheet_id,
+        sheet_name=sheet_name,
+        movement_id=movement_id,
+        employee_name=employee_name,
+        movement_id_column_index=movement_id_column_index,
+        employee_column_index=employee_column_index,
+    )
+    if matches:
+        _update_sheet_row(service, sheet_id, sheet_name, matches[0], row_values)
+        if len(matches) > 1:
+            delete_rows(service, sheet_id, sheet_name, matches[1:])
+        return
+    _append_sheet_row(service, sheet_id, sheet_name, row_values)
+
+
+def append_salary_detail_to_salaries(sheet_id: str, movement: Movement, salary) -> None:
+    employee = _normalize_employee_name(_extract_salary_employee_name(salary))
+    if not employee:
         return
 
     service = get_sheets_service()
-    for salary in movement.salaries:
-        values = [[
-            str(movement.date),
-            salary.employee.name,
-            "Adelanto",
-            "Adelanto",
-            float(salary.subtotal),
-            str(movement.id),
-        ]]
-        service.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range="SUELDOS!A:F",
-            valueInputOption="USER_ENTERED",
-            body={"values": values},
-        ).execute()
+    movement_id = str(movement.id).strip()
+    salary_amount = _extract_salary_amount(salary)
+    salary_date = str(movement.date)
+    print("WRITE SALARY → SALARIES", movement.id, employee)
+    _upsert_salary_row(
+        service=service,
+        sheet_id=sheet_id,
+        sheet_name="SALARIES",
+        row_values=[
+            movement_id,
+            employee,
+            salary_amount,
+            salary_date,
+        ],
+        movement_id=movement_id,
+        employee_name=employee,
+        movement_id_column_index=0,
+        employee_column_index=1,
+    )
 
 
-def append_salaries(sheet_id: str, movement: Movement) -> None:
-    append_salaries_to_sheet(sheet_id, movement)
+def append_salary_summary_to_sueldos(sheet_id: str, movement: Movement, salary) -> None:
+    employee = _normalize_employee_name(_extract_salary_employee_name(salary))
+    if not employee:
+        return
+
+    service = get_sheets_service()
+    movement_id = str(movement.id).strip()
+    salary_amount = _extract_salary_amount(salary)
+    salary_date = str(movement.date)
+    print("WRITE SALARY → SUELDOS", movement.id, employee)
+    _upsert_salary_row(
+        service=service,
+        sheet_id=sheet_id,
+        sheet_name="SUELDOS",
+        row_values=[
+            salary_date,
+            employee,
+            "Adelanto",
+            "Adelanto",
+            salary_amount,
+            movement_id,
+        ],
+        movement_id=movement_id,
+        employee_name=employee,
+        movement_id_column_index=5,
+        employee_column_index=1,
+    )
 
 
 def append_gasto_to_sheet(sheet_id: str, movement: Movement) -> None:
@@ -250,16 +347,16 @@ def append_gasto_to_sheet(sheet_id: str, movement: Movement) -> None:
 def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
     append_movement(sheet_id, movement)
     append_items(sheet_id, list(movement.items or []))
-    append_salaries(sheet_id, movement)
+    for salary in movement.salaries or []:
+        append_salary_detail_to_salaries(sheet_id, movement, salary)
+        append_salary_summary_to_sueldos(sheet_id, movement, salary)
     append_client_payments(sheet_id, list(movement.client_payments or []))
 
-    movement_type = movement.type.value
+    movement_type = _movement_type_key(movement)
     if movement_type in ("compra", "venta"):
         append_items_to_product_sheets(sheet_id, movement)
     if movement_type == "pago_cliente":
         append_client_payments_to_cuentas(sheet_id, movement)
-    if movement_type == "sueldo":
-        append_salaries_to_sheet(sheet_id, movement)
     if movement_type == "gasto":
         append_gasto_to_sheet(sheet_id, movement)
 
@@ -310,6 +407,43 @@ def find_rows_by_movement_id(
 
         if row_id == target:
             rows.append(i + 1)  # Sheets row index starts at 1
+    return rows
+
+
+def find_rows_by_movement_id_and_employee(
+    service,
+    sheet_id: str,
+    sheet_name: str,
+    movement_id: str,
+    employee_name: str,
+    movement_id_column_index: int,
+    employee_column_index: int,
+) -> list[int]:
+    result = service.spreadsheets().values().get(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!A:Z",
+    ).execute()
+    values = result.get("values", [])
+    target_movement_id = str(movement_id).strip()
+    target_employee = _normalize_employee_name(employee_name)
+    rows: list[int] = []
+
+    for i, row in enumerate(values):
+        if not row:
+            continue
+        if movement_id_column_index >= len(row):
+            continue
+
+        row_movement_id = str(row[movement_id_column_index]).strip()
+        row_employee = (
+            _normalize_employee_name(row[employee_column_index])
+            if employee_column_index < len(row)
+            else ""
+        )
+
+        if row_movement_id == target_movement_id and row_employee == target_employee:
+            rows.append(i + 1)  # Sheets row index starts at 1
+
     return rows
 
 
