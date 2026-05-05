@@ -1348,30 +1348,23 @@ function abrirModalConSeccionClonada(config) {
 
 function obtenerProductosCompraDesdeMovimiento(mov) {
   var datos = mov && mov.datos && typeof mov.datos === 'object' ? mov.datos : null;
-  return mapItemsToForm(datos && datos.productos, mov);
+  var rawItems = [];
+  if (Array.isArray(mov && mov.items)) rawItems = mov.items;
+  else if (Array.isArray(datos && datos.productos)) rawItems = datos.productos;
+  return mapItemsToForm(rawItems);
 }
 
-function mapItemsToForm(items, movFallback) {
-  var lista = [];
+function mapItemsToForm(items) {
   var source = Array.isArray(items) ? items : [];
-
-  source.forEach(function(item) {
-    var producto = String(item && item.producto || item && item.product || '').trim();
-    var kg = toNumber(item && (item.kg != null ? item.kg : item.quantity));
-    var precio = toNumber(item && (item.precio != null ? item.precio : item.unit_price));
-    if (!producto || !(kg > 0)) return;
-    lista.push({ producto: producto, kg: kg, precio: precio });
+  return source.map(function(item) {
+    return {
+      producto: String(item && (item.product != null ? item.product : item.producto) || '').trim(),
+      kg: toNumber(item && (item.quantity != null ? item.quantity : item.kg)),
+      precio: toNumber(item && (item.unit_price != null ? item.unit_price : item.precio))
+    };
+  }).filter(function(item) {
+    return !!item.producto && item.kg > 0;
   });
-
-  if (!lista.length) {
-    var productoSimple = String(movFallback && movFallback.producto || '').trim();
-    var kgSimple = toNumber(movFallback && movFallback.kg);
-    if (productoSimple && kgSimple > 0) {
-      lista.push({ producto: productoSimple, kg: kgSimple, precio: 0 });
-    }
-  }
-
-  return lista;
 }
 
 function configurarClienteCardCompra(card, cliente) {
@@ -1408,6 +1401,7 @@ function configurarProductosCardCompra(card, productos) {
 }
 
 function prellenarFormularioMovimientoEdicion(root, mov) {
+  console.log('EDIT MOV:', mov);
   var fecha = String(mov && mov.fecha || document.getElementById('fechaSaldo').value || hoyArgentinaISO()).trim();
   var tipo = normalizarTipoMovimiento(mov && mov.tipo);
   var detalle = String(mov && mov.detalle || '').trim();
@@ -1440,11 +1434,34 @@ function prellenarFormularioMovimientoEdicion(root, mov) {
   if (!card) throw new Error('No se pudo inicializar el formulario de movimientos');
 
   var n = String(card.dataset.id || '');
+  var productosCompra = obtenerProductosCompraDesdeMovimiento(mov);
+  var clienteDesdeItems = '';
+  if (Array.isArray(mov && mov.items) && mov.items.length) {
+    clienteDesdeItems = String(mov.items[0] && mov.items[0].client || '').trim();
+  } else if (Array.isArray(mov && mov.datos && mov.datos.productos) && mov.datos.productos.length) {
+    clienteDesdeItems = String(mov.datos.productos[0] && mov.datos.productos[0].cliente || '').trim();
+  }
+  var clienteReal = String(cliente || clienteDesdeItems || '').trim();
+  var productoDesdeItems = '';
+  if (Array.isArray(productosCompra) && productosCompra.length) {
+    productoDesdeItems = String(productosCompra[0] && productosCompra[0].producto || '').trim();
+  }
+  var kgDesdeItems = 0;
+  if (Array.isArray(productosCompra) && productosCompra.length) {
+    kgDesdeItems = toNumber(productosCompra[0] && productosCompra[0].kg);
+  }
+
+  console.log('FORM DATA:', {
+    tipo: mov && mov.tipo,
+    fecha: mov && mov.fecha,
+    cliente: clienteReal || '',
+    productos: productosCompra
+  });
 
   if (tipo === 'compra') {
     setTipo(n, 'Compra');
-    configurarClienteCardCompra(card, cliente);
-    configurarProductosCardCompra(card, obtenerProductosCompraDesdeMovimiento(mov));
+    configurarClienteCardCompra(card, clienteReal);
+    configurarProductosCardCompra(card, productosCompra);
 
     var montoInpCompra = card.querySelector('.monto-inp');
     if (montoInpCompra) montoInpCompra.value = monto > 0 ? String(monto) : '';
@@ -1456,10 +1473,12 @@ function prellenarFormularioMovimientoEdicion(root, mov) {
 
   if (tipo === 'descarga') {
     setTipo(n, 'Descarga');
-    if (typeof csSetValue === 'function') csSetValue('mov-prod-' + n, producto || '', true);
+    if (typeof csSetValue === 'function') csSetValue('mov-prod-' + n, producto || productoDesdeItems || '', true);
+    if (typeof csSetValue === 'function') csSetValue('mov-desc-cli-' + n, clienteReal || '', true);
+    card.dataset.clienteManual = clienteReal ? '1' : '';
 
     var kgDescInp = card.querySelector('.kg-inp');
-    if (kgDescInp) kgDescInp.value = kg > 0 ? String(kg) : '';
+    if (kgDescInp) kgDescInp.value = kg > 0 ? String(kg) : (kgDesdeItems > 0 ? String(kgDesdeItems) : '');
 
     card.dataset.detalleEdicion = detalle;
     programarCalculo(card);
@@ -1472,10 +1491,10 @@ function prellenarFormularioMovimientoEdicion(root, mov) {
     var opcionesPago = Array.isArray(window.clientesEspeciales) && window.clientesEspeciales.length
       ? window.clientesEspeciales.slice()
       : CLIENTES_ESPECIALES_FALLBACK.slice();
-    if (cliente && opcionesPago.indexOf(cliente) === -1) opcionesPago.unshift(cliente);
+    if (clienteReal && opcionesPago.indexOf(clienteReal) === -1) opcionesPago.unshift(clienteReal);
 
     if (typeof csSetOptions === 'function') {
-      csSetOptions('mov-pago-cli-' + n, opcionesPago, cliente || '', true);
+      csSetOptions('mov-pago-cli-' + n, opcionesPago, clienteReal || '', true);
     }
 
     var montoInpPago = card.querySelector('.monto-inp');
