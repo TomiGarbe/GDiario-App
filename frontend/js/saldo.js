@@ -224,9 +224,15 @@ function getClienteMovimiento(mov) {
 
 function renderCompraDetalle(mov, formatNombreUi) {
   var datos = mov && mov.datos && typeof mov.datos === 'object' ? mov.datos : null;
-  if (!datos || !Array.isArray(datos.productos) || !datos.productos.length) return '';
+  var source = [];
+  if (datos && Array.isArray(datos.productos) && datos.productos.length) {
+    source = datos.productos;
+  } else if (Array.isArray(mov && mov.items) && mov.items.length) {
+    source = mov.items;
+  }
+  if (!source.length) return '';
 
-  var partes = datos.productos.map(function(item) {
+  var partes = source.map(function(item) {
     var prod = String(item && item.producto || item && item.product || '').trim();
     var kg = toNumber(item && (item.kg != null ? item.kg : item.quantity));
     if (!prod || !(kg > 0)) return '';
@@ -262,6 +268,13 @@ function detalleMovimiento(mov) {
       var kg0 = toNumber(p0 && (p0.kg != null ? p0.kg : p0.quantity));
       if (prod0 && kg0 > 0) {
         partes.push('Producto: ' + formatNombreUi(prod0) + ' ' + formatearNumeroMov(kg0) + ' kg');
+      }
+    } else if (Array.isArray(mov.items) && mov.items.length) {
+      var i0 = mov.items[0];
+      var prodItem = String(i0 && i0.product || '').trim();
+      var kgItem = toNumber(i0 && i0.quantity);
+      if (prodItem && kgItem > 0) {
+        partes.push('Producto: ' + formatNombreUi(prodItem) + ' ' + formatearNumeroMov(kgItem) + ' kg');
       }
     } else if (mov.producto && toNumber(mov.kg) > 0) {
       partes.push('Producto: ' + formatNombreUi(mov.producto) + ' ' + formatearNumeroMov(mov.kg) + ' kg');

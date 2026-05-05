@@ -145,12 +145,27 @@ function mapBackendMovementToLegacy(mov) {
         id: m.id,
         fecha: m.date,
         tipo: type === 'compra' ? 'Compra' : 'Descarga',
-        cliente: items[0] && items[0].client ? items[0].client : '',
+        cliente: (items[0] && items[0].client ? items[0].client : '') || String(m.client || '').trim(),
         producto: primaryProduct,
         kg: primaryKg,
         monto: num(m.amount),
+        items: items.map(function(i) {
+          return {
+            client: String(i && i.client || '').trim(),
+            product: String(i && i.product || '').trim(),
+            quantity: num(i && i.quantity),
+            unit_price: num(i && i.unit_price)
+          };
+        }),
         datos: {
-          productos: legacyProducts
+          productos: legacyProducts.map(function(p, idx) {
+            return {
+              producto: String(p && p.producto || '').trim(),
+              kg: num(p && p.kg),
+              precio: num(p && p.precio),
+              cliente: String(items[idx] && items[idx].client || '').trim()
+            };
+          })
         },
         detalle: m.description || '',
         editable: true
