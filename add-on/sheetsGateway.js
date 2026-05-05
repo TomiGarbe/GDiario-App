@@ -75,6 +75,56 @@ function upsertMovements(rows) {
   });
 }
 
+function reconcileMovements(rows) {
+  const sheet = _getOrCreateSheet(MOVEMENTS_SHEET_NAME);
+  _ensureMovementsSchema(sheet);
+
+  const current = sheet.getDataRange().getValues();
+  const existingData = current.length > 1 ? current.slice(1) : [];
+  const existingById = {};
+  existingData.forEach((row, idx) => {
+    const id = String(row[MOVEMENTS_HEADER_INDEX.id] || "").trim();
+    if (!id) return;
+    existingById[id] = {
+      rowIndex: idx + 2,
+      values: row
+    };
+  });
+
+  const normalized = _normalizeMovementRows(rows, "manual");
+  const rebuiltById = {};
+  normalized.forEach((movement) => {
+    const movementId = String((movement && movement.id) || "").trim();
+    if (!movementId) return;
+    rebuiltById[movementId] = movement;
+  });
+
+  Object.keys(rebuiltById).forEach((id) => {
+    const newRow = _movementToSheetRow(rebuiltById[id]);
+    if (existingById[id]) {
+      Logger.log("UPDATE: " + id);
+      sheet.getRange(existingById[id].rowIndex, 1, 1, MOVEMENTS_HEADERS.length).setValues([newRow]);
+    } else {
+      Logger.log("INSERT: " + id);
+      sheet.appendRow(newRow);
+    }
+  });
+
+  const rowsToDelete = [];
+  Object.keys(existingById).forEach((id) => {
+    if (!rebuiltById[id]) {
+      rowsToDelete.push({ id, rowIndex: existingById[id].rowIndex });
+    }
+  });
+  rowsToDelete.sort((a, b) => b.rowIndex - a.rowIndex);
+  rowsToDelete.forEach((entry) => {
+    Logger.log("DELETE: " + entry.id);
+    sheet.deleteRow(entry.rowIndex);
+  });
+
+  aplicarFormatoTablaGenerica(sheet, 2, [4]);
+}
+
 function deleteMovementsByIds(ids) {
   if (!Array.isArray(ids) || !ids.length) return;
   const sheet = _getOrCreateSheet(MOVEMENTS_SHEET_NAME);

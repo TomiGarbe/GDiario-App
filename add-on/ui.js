@@ -79,7 +79,7 @@ function accionReconstruirMovimientos() {
     const movementItems = Array.isArray(result.movement_items) ? result.movement_items : [];
     const movementSalaries = Array.isArray(result.movement_salaries) ? result.movement_salaries : [];
     const movementClientPayments = Array.isArray(result.movement_client_payments) ? result.movement_client_payments : [];
-    writeMovements(movements.map((m) => ({ ...m, source: m && m.source ? m.source : "sheet" })));
+    reconcileMovements(movements.map((m) => ({ ...m, source: m && m.source ? m.source : "sheet" })));
     writeMovementItems(movementItems);
     writeMovementSalaries(movementSalaries);
     writeMovementClientPayments(movementClientPayments);
