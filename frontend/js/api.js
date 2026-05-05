@@ -111,10 +111,13 @@ function buildQueryString(params) {
 function mapItemsToLegacyProducts(items) {
   var source = Array.isArray(items) ? items : [];
   return source.map(function(i) {
+    var producto = String(i && (i.product != null ? i.product : i.producto) || '').trim();
+    var kg = toNum(i && (i.quantity != null ? i.quantity : i.kg));
+    var precio = toNum(i && (i.unit_price != null ? i.unit_price : i.precio));
     return {
-      producto: i && i.product ? i.product : '',
-      kg: toNum(i && i.quantity),
-      precio: toNum(i && i.unit_price)
+      producto: producto,
+      kg: kg,
+      precio: precio
     };
   });
 }
@@ -130,16 +133,24 @@ function mapBackendMovementToLegacy(mov) {
   switch (type) {
     case 'compra':
     case 'venta':
+      var legacyProducts = mapItemsToLegacyProducts(items);
+      var primaryProduct = '';
+      var primaryKg = 0;
+      if (legacyProducts.length === 1) {
+        primaryProduct = String(legacyProducts[0] && legacyProducts[0].producto || '').trim();
+        primaryKg = num(legacyProducts[0] && legacyProducts[0].kg);
+      }
+      console.log('ITEMS:', m.items);
       return {
         id: m.id,
         fecha: m.date,
         tipo: type === 'compra' ? 'Compra' : 'Descarga',
         cliente: items[0] && items[0].client ? items[0].client : '',
-        producto: items[0] && items[0].product ? items[0].product : '',
-        kg: num(items[0] && items[0].quantity),
+        producto: primaryProduct,
+        kg: primaryKg,
         monto: num(m.amount),
         datos: {
-          productos: mapItemsToLegacyProducts(items)
+          productos: legacyProducts
         },
         detalle: m.description || '',
         editable: true

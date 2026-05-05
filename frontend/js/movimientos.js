@@ -231,6 +231,8 @@ function crearFilaCompra(card, productoInicial, kgInicial) {
   compraItemSeq++;
 
   var key = 'mov-compra-prod-' + n + '-' + compraItemSeq;
+  var productoInicialTxt = String(productoInicial == null ? '' : productoInicial).trim();
+  var opcionesIniciales = productoInicialTxt ? [productoInicialTxt] : [];
   var row = document.createElement('div');
   row.className = 'prod-row compra-item no-price';
   row.dataset.selKey = key;
@@ -239,7 +241,7 @@ function crearFilaCompra(card, productoInicial, kgInicial) {
   row.innerHTML = `
     <div class="compra-item-top">
       <div class="compra-item-selector">
-        ${htmlSelectCustom(key, [], productoInicial || '', {
+        ${htmlSelectCustom(key, opcionesIniciales, productoInicialTxt, {
           placeholder: 'Selecciona producto...',
           searchable: false,
           valueClass: 'compra-prod-sel'

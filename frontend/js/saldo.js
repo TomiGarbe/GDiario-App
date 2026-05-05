@@ -208,31 +208,35 @@ function detalleMovimiento(mov) {
 
   if (mov) {
     if (mov.cliente) partes.push('Cliente: ' + formatNombreUi(mov.cliente));
-    if (mov.producto && toNumber(mov.kg) > 0) partes.push('Producto: ' + formatNombreUi(mov.producto) + ' ' + formatearNumeroMov(mov.kg) + ' kg');
-    else if (mov.datos) {
-      if (Array.isArray(mov.datos.productos) && mov.datos.productos.length > 1) {
-        var productosTxt = mov.datos.productos.map(function(item) {
-          var prod = String(item && item.producto || '').trim();
-          var kg = toNumber(item && item.kg);
-          if (!prod || !(kg > 0)) return '';
-          return formatNombreUi(prod) + ' ' + formatearNumeroMov(kg) + ' kg';
-        }).filter(Boolean).join(' | ');
+    var datos = mov.datos && typeof mov.datos === 'object' ? mov.datos : null;
+    var productosDetalle = [];
 
-        if (productosTxt) partes.push('Productos: ' + productosTxt);
-      }
-      else if (Array.isArray(mov.datos.empleados) && mov.datos.empleados.length) {
-        var empleadosTxt = mov.datos.empleados.map(function(item) {
-          var nombre = String(item && item.nombre || '').trim();
-          var monto = toNumber(item && item.monto);
-          if (!nombre || !(monto > 0)) return '';
-          return nombre + ' $ ' + formatearNumeroMov(monto);
-        }).filter(Boolean).join(' | ');
+    if (datos && Array.isArray(datos.productos)) {
+      productosDetalle = datos.productos.map(function(item) {
+        var prod = String(item && item.producto || item && item.product || '').trim();
+        var kg = toNumber(item && (item.kg != null ? item.kg : item.quantity));
+        if (!prod || !(kg > 0)) return '';
+        return formatNombreUi(prod) + ' ' + formatearNumeroMov(kg) + ' kg';
+      }).filter(Boolean);
+    }
 
-        if (empleadosTxt) partes.push('Ayudantes: ' + empleadosTxt);
-      }
-      else if (mov.detalle && mov.tipo && !esTipoIngreso(mov.tipo)) {
-        partes.push(mov.detalle);
-      }
+    if (productosDetalle.length > 1) {
+      partes.push('Productos: ' + productosDetalle.join(' | '));
+    } else if (productosDetalle.length === 1) {
+      partes.push('Producto: ' + productosDetalle[0]);
+    } else if (mov.producto && toNumber(mov.kg) > 0) {
+      partes.push('Producto: ' + formatNombreUi(mov.producto) + ' ' + formatearNumeroMov(mov.kg) + ' kg');
+    } else if (datos && Array.isArray(datos.empleados) && datos.empleados.length) {
+      var empleadosTxt = datos.empleados.map(function(item) {
+        var nombre = String(item && item.nombre || '').trim();
+        var monto = toNumber(item && item.monto);
+        if (!nombre || !(monto > 0)) return '';
+        return nombre + ' $ ' + formatearNumeroMov(monto);
+      }).filter(Boolean).join(' | ');
+
+      if (empleadosTxt) partes.push('Ayudantes: ' + empleadosTxt);
+    } else if (mov.detalle && mov.tipo && !esTipoIngreso(mov.tipo)) {
+      partes.push(mov.detalle);
     }
   }
 
