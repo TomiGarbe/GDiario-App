@@ -1542,6 +1542,15 @@ function prellenarFormularioMovimientoEdicion(root, mov) {
       csSetOptions('mov-prod-' + n, opcionesDesc, productoDescarga, true);
     }
     if (typeof csSetValue === 'function') csSetValue('mov-prod-' + n, productoDescarga, true);
+    if (typeof csSetOptions === 'function') {
+      var opcionesDescCli = (typeof CLIENTES_DESCARGA !== 'undefined' && Array.isArray(CLIENTES_DESCARGA))
+        ? CLIENTES_DESCARGA.slice()
+        : [];
+      if (clienteReal && opcionesDescCli.indexOf(clienteReal) === -1) {
+        opcionesDescCli.unshift(clienteReal);
+      }
+      csSetOptions('mov-desc-cli-' + n, opcionesDescCli, clienteReal || '', true);
+    }
     if (typeof csSetValue === 'function') csSetValue('mov-desc-cli-' + n, clienteReal || '', true);
     card.dataset.clienteManual = clienteReal ? '1' : '';
 
