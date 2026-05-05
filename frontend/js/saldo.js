@@ -1344,22 +1344,26 @@ function abrirModalConSeccionClonada(config) {
 
 function obtenerProductosCompraDesdeMovimiento(mov) {
   var datos = mov && mov.datos && typeof mov.datos === 'object' ? mov.datos : null;
-  var lista = [];
+  return mapItemsToForm(datos && datos.productos, mov);
+}
 
-  if (datos && Array.isArray(datos.productos)) {
-    datos.productos.forEach(function(item) {
-      var producto = String(item && item.producto || '').trim();
-      var kg = toNumber(item && item.kg);
-      if (!producto || !(kg > 0)) return;
-      lista.push({ producto: producto, kg: kg });
-    });
-  }
+function mapItemsToForm(items, movFallback) {
+  var lista = [];
+  var source = Array.isArray(items) ? items : [];
+
+  source.forEach(function(item) {
+    var producto = String(item && item.producto || item && item.product || '').trim();
+    var kg = toNumber(item && (item.kg != null ? item.kg : item.quantity));
+    var precio = toNumber(item && (item.precio != null ? item.precio : item.unit_price));
+    if (!producto || !(kg > 0)) return;
+    lista.push({ producto: producto, kg: kg, precio: precio });
+  });
 
   if (!lista.length) {
-    var productoSimple = String(mov && mov.producto || '').trim();
-    var kgSimple = toNumber(mov && mov.kg);
+    var productoSimple = String(movFallback && movFallback.producto || '').trim();
+    var kgSimple = toNumber(movFallback && movFallback.kg);
     if (productoSimple && kgSimple > 0) {
-      lista.push({ producto: productoSimple, kg: kgSimple });
+      lista.push({ producto: productoSimple, kg: kgSimple, precio: 0 });
     }
   }
 

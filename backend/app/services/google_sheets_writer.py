@@ -138,16 +138,20 @@ def append_items_to_product_sheets(sheet_id: str, movement: Movement) -> None:
     touched: set[tuple[date, str, str]] = set()
     for item in movement.items:
         product_name = (item.product.name or "").strip().upper()
-        if product_name not in {"GRASA", "HUESOS"}:
+        if product_name not in {"GRASA", "HUESOS", "ASERRIN"}:
             continue
         touched.add((movement.date, item.client.name, product_name))
     for movement_date, client_name, product_name in touched:
+        sheet_name = _sheet_name_for_product(product_name)
+        if sheet_name is None:
+            continue
         _recalculate_product_quantity(
             service=service,
             spreadsheet_id=sheet_id,
-            sheet_name=product_name,
+            sheet_name=sheet_name,
             movement_date=movement_date,
             client_name=client_name,
+            product_name=product_name,
             period_id=movement.period_id,
         )
 
@@ -493,14 +497,18 @@ def delete_movement_from_sheets(
     if period_id is None:
         return
     for movement_date, client_name, product_name in touched:
-        if product_name not in {"GRASA", "HUESOS"}:
+        if product_name not in {"GRASA", "HUESOS", "ASERRIN"}:
+            continue
+        sheet_name = _sheet_name_for_product(product_name)
+        if sheet_name is None:
             continue
         _recalculate_product_quantity(
             service=service,
             spreadsheet_id=sheet_id,
-            sheet_name=product_name,
+            sheet_name=sheet_name,
             movement_date=movement_date,
             client_name=client_name,
+            product_name=product_name,
             period_id=period_id,
         )
 
@@ -566,6 +574,7 @@ def _recalculate_product_quantity(
     sheet_name: str,
     movement_date,
     client_name: str,
+    product_name: str,
     period_id: int,
 ) -> None:
     result = service.spreadsheets().values().get(
@@ -589,13 +598,12 @@ def _recalculate_product_quantity(
         return
 
     rows = values[1:] if len(values) > 1 else []
-    target_client = str(client_name or "").strip().lower()
-    row_index = None
-    for i, row in enumerate(rows, start=2):
-        cell = str(row[0]).strip().lower() if row else ""
-        if cell == target_client:
-            row_index = i
-            break
+    row_index = _find_client_row_index(
+        rows=rows,
+        client_name=client_name,
+        sheet_name=sheet_name,
+        product_name=product_name,
+    )
     if row_index is None:
         print(f"[SHEETS SKIP] Cliente no encontrado: {client_name}")
         return
@@ -605,7 +613,7 @@ def _recalculate_product_quantity(
         period_id=period_id,
         movement_date=movement_date,
         client_name=client_name,
-        product_name=sheet_name,
+        product_name=product_name,
     )
 
     cell_ref = f"{sheet_name}!{col_letter}{row_index}"
@@ -653,6 +661,44 @@ def _sum_active_quantity_from_db(
         return Decimal(total or 0)
     finally:
         db.close()
+
+
+def _sheet_name_for_product(product_name: str) -> str | None:
+    product = str(product_name or "").strip().upper()
+    if product == "GRASA":
+        return "GRASA"
+    if product in {"HUESOS", "ASERRIN"}:
+        return "HUESOS"
+    return None
+
+
+def _find_client_row_index(
+    *,
+    rows: list[list[object]],
+    client_name: str,
+    sheet_name: str,
+    product_name: str,
+) -> int | None:
+    target_client = str(client_name or "").strip().lower()
+    matches: list[int] = []
+    for i, row in enumerate(rows, start=2):
+        cell = str(row[0]).strip().lower() if row else ""
+        if cell == target_client:
+            matches.append(i)
+
+    if not matches:
+        return None
+
+    # Caso especial: en hoja HUESOS, CORDIEZ tiene dos filas:
+    # primera para ASERRIN, segunda para HUESOS.
+    if sheet_name == "HUESOS" and target_client == "cordiez" and len(matches) >= 2:
+        target_product = str(product_name or "").strip().upper()
+        if target_product == "ASERRIN":
+            return matches[0]
+        if target_product == "HUESOS":
+            return matches[1]
+
+    return matches[0]
 
 
 def _load_product_cells_for_movement(movement_id: UUID) -> set[tuple[date, str, str]]:

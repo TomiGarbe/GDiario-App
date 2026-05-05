@@ -48,7 +48,7 @@ class MovementService:
         cells: set[tuple] = set()
         for item in movement.items or []:
             product_name = (item.product.name or "").strip().upper()
-            if product_name not in {"GRASA", "HUESOS"}:
+            if product_name not in {"GRASA", "HUESOS", "ASERRIN"}:
                 continue
             cells.add((movement.date, item.client.name, product_name))
         return cells

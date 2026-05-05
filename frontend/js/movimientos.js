@@ -434,10 +434,14 @@ function actualizarOpcionesProducto(card) {
       if (!item.key || typeof csSetOptions !== 'function') return;
 
       var actual = typeof csGetValue === 'function' ? csGetValue(item.key) : item.producto;
-      var next = lista.indexOf(actual) !== -1 ? actual : fallback;
+      var opciones = lista.slice();
+      if (actual && opciones.indexOf(actual) === -1) {
+        opciones.unshift(actual);
+      }
+      var next = actual || fallback;
 
       if (String(actual || '') !== String(next || '')) huboCambio = true;
-      csSetOptions(item.key, lista, next, true);
+      csSetOptions(item.key, opciones, next, true);
     });
 
     if (huboCambio) {
@@ -476,15 +480,15 @@ function programarCalculo(card) {
   }, 300);
 }
 
-function sugerirClienteDescarga(fechaStr) {
+function getClienteDefault(fechaStr) {
   if (!fechaStr) return '';
   var parts = fechaStr.split('-');
   if (parts.length !== 3) return '';
   var fecha = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
   var dia = fecha.getDay();
-  if (dia === 1 || dia === 2 || dia === 4) return 'NICO';
-  if (dia === 3) return 'MARCOS';
-  if (dia === 5) return 'REFINERIA';
+  if (dia === 1 || dia === 2 || dia === 4) return 'Nico';
+  if (dia === 3) return 'Marcos';
+  if (dia === 5) return 'Refineria';
   return '';
 }
 
@@ -504,7 +508,7 @@ function actualizarClienteDescarga(card) {
   if (card.dataset.clienteManual === '1') return;
 
   var fechaStr = document.getElementById('fecha') ? document.getElementById('fecha').value : '';
-  var sugerido = sugerirClienteDescarga(fechaStr);
+  var sugerido = getClienteDefault(fechaStr);
   if (sugerido && typeof csSetValue === 'function') {
     csSetValue('mov-desc-cli-' + n, sugerido, true);
   }

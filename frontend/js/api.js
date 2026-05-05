@@ -108,6 +108,17 @@ function buildQueryString(params) {
   return pairs.length ? ('?' + pairs.join('&')) : '';
 }
 
+function mapItemsToLegacyProducts(items) {
+  var source = Array.isArray(items) ? items : [];
+  return source.map(function(i) {
+    return {
+      producto: i && i.product ? i.product : '',
+      kg: toNum(i && i.quantity),
+      precio: toNum(i && i.unit_price)
+    };
+  });
+}
+
 function mapBackendMovementToLegacy(mov) {
   var m = mov || {};
   var num = function(v) { return Number(v == null ? 0 : v); };
@@ -128,13 +139,7 @@ function mapBackendMovementToLegacy(mov) {
         kg: num(items[0] && items[0].quantity),
         monto: num(m.amount),
         datos: {
-          productos: items.map(function(i) {
-            return {
-              producto: i && i.product ? i.product : '',
-              kg: num(i && i.quantity),
-              precio: num(i && i.unit_price)
-            };
-          })
+          productos: mapItemsToLegacyProducts(items)
         },
         detalle: m.description || '',
         editable: true
