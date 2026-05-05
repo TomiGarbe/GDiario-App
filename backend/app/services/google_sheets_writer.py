@@ -213,26 +213,15 @@ def _normalize_employee_name(value: str | None) -> str:
     return str(value or "").strip().upper()
 
 
-def _build_salary_rows(movement: Movement) -> list[dict[str, object]]:
-    movement_id = str(movement.id).strip()
-    movement_date = str(movement.date)
-    deduped: dict[tuple[str, str], float] = {}
+def _extract_salary_employee_name(salary) -> str:
+    employee = getattr(salary, "employee", "")
+    if isinstance(employee, str):
+        return employee
+    return str(getattr(employee, "name", ""))
 
-    for salary in movement.salaries or []:
-        employee_name = _normalize_employee_name(getattr(salary.employee, "name", ""))
-        if not employee_name:
-            continue
-        deduped[(movement_id, employee_name)] = float(salary.subtotal)
 
-    return [
-        {
-            "movement_id": row_movement_id,
-            "employee": employee_name,
-            "amount": amount,
-            "date": movement_date,
-        }
-        for (row_movement_id, employee_name), amount in deduped.items()
-    ]
+def _extract_salary_amount(salary) -> float:
+    return float(getattr(salary, "subtotal", 0) or 0)
 
 
 def _update_sheet_row(service, sheet_id: str, sheet_name: str, row_index: int, row_values: list[object]) -> None:
@@ -282,58 +271,60 @@ def _upsert_salary_row(
     _append_sheet_row(service, sheet_id, sheet_name, row_values)
 
 
-def append_salaries_to_sheet(sheet_id: str, movement: Movement) -> None:
-    if not movement.salaries:
+def append_salary_detail_to_salaries(sheet_id: str, movement: Movement, salary) -> None:
+    employee = _normalize_employee_name(_extract_salary_employee_name(salary))
+    if not employee:
         return
 
     service = get_sheets_service()
-    for row in _build_salary_rows(movement):
-        _upsert_salary_row(
-            service=service,
-            sheet_id=sheet_id,
-            sheet_name="SUELDOS",
-            row_values=[
-                row["date"],
-                row["employee"],
-                "Adelanto",
-                "Adelanto",
-                row["amount"],
-                row["movement_id"],
-            ],
-            movement_id=str(row["movement_id"]),
-            employee_name=str(row["employee"]),
-            movement_id_column_index=5,
-            employee_column_index=1,
-        )
+    movement_id = str(movement.id).strip()
+    salary_amount = _extract_salary_amount(salary)
+    salary_date = str(movement.date)
+    print("WRITE SALARY → SALARIES", movement.id, employee)
+    _upsert_salary_row(
+        service=service,
+        sheet_id=sheet_id,
+        sheet_name="SALARIES",
+        row_values=[
+            movement_id,
+            employee,
+            salary_amount,
+            salary_date,
+        ],
+        movement_id=movement_id,
+        employee_name=employee,
+        movement_id_column_index=0,
+        employee_column_index=1,
+    )
 
 
-def append_salaries_to_aggregate_sheet(sheet_id: str, movement: Movement) -> None:
-    if not movement.salaries:
+def append_salary_summary_to_sueldos(sheet_id: str, movement: Movement, salary) -> None:
+    employee = _normalize_employee_name(_extract_salary_employee_name(salary))
+    if not employee:
         return
 
     service = get_sheets_service()
-    for row in _build_salary_rows(movement):
-        _upsert_salary_row(
-            service=service,
-            sheet_id=sheet_id,
-            sheet_name="SALARIES",
-            row_values=[
-                row["movement_id"],
-                row["employee"],
-                row["amount"],
-            ],
-            movement_id=str(row["movement_id"]),
-            employee_name=str(row["employee"]),
-            movement_id_column_index=0,
-            employee_column_index=1,
-        )
-
-
-def append_salaries(sheet_id: str, movement: Movement) -> None:
-    if _movement_type_key(movement) not in {"sueldo", "adelanto"}:
-        return
-    append_salaries_to_aggregate_sheet(sheet_id, movement)
-    append_salaries_to_sheet(sheet_id, movement)
+    movement_id = str(movement.id).strip()
+    salary_amount = _extract_salary_amount(salary)
+    salary_date = str(movement.date)
+    print("WRITE SALARY → SUELDOS", movement.id, employee)
+    _upsert_salary_row(
+        service=service,
+        sheet_id=sheet_id,
+        sheet_name="SUELDOS",
+        row_values=[
+            salary_date,
+            employee,
+            "Adelanto",
+            "Adelanto",
+            salary_amount,
+            movement_id,
+        ],
+        movement_id=movement_id,
+        employee_name=employee,
+        movement_id_column_index=5,
+        employee_column_index=1,
+    )
 
 
 def append_gasto_to_sheet(sheet_id: str, movement: Movement) -> None:
@@ -356,7 +347,9 @@ def append_gasto_to_sheet(sheet_id: str, movement: Movement) -> None:
 def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
     append_movement(sheet_id, movement)
     append_items(sheet_id, list(movement.items or []))
-    append_salaries(sheet_id, movement)
+    for salary in movement.salaries or []:
+        append_salary_detail_to_salaries(sheet_id, movement, salary)
+        append_salary_summary_to_sueldos(sheet_id, movement, salary)
     append_client_payments(sheet_id, list(movement.client_payments or []))
 
     movement_type = _movement_type_key(movement)
