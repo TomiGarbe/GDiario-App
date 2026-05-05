@@ -4,6 +4,7 @@ import json
 from functools import lru_cache
 from datetime import date, datetime
 from decimal import Decimal
+import unicodedata
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -137,8 +138,8 @@ def append_items_to_product_sheets(sheet_id: str, movement: Movement) -> None:
     service = get_sheets_service()
     touched: set[tuple[date, str, str]] = set()
     for item in movement.items:
-        product_name = (item.product.name or "").strip().upper()
-        if product_name not in {"GRASA", "HUESOS", "ASERRIN"}:
+        product_name = str(item.product.name or "").strip()
+        if _sheet_name_for_product(product_name) is None:
             continue
         touched.add((movement.date, item.client.name, product_name))
     for movement_date, client_name, product_name in touched:
@@ -497,8 +498,6 @@ def delete_movement_from_sheets(
     if period_id is None:
         return
     for movement_date, client_name, product_name in touched:
-        if product_name not in {"GRASA", "HUESOS", "ASERRIN"}:
-            continue
         sheet_name = _sheet_name_for_product(product_name)
         if sheet_name is None:
             continue
@@ -598,14 +597,14 @@ def _recalculate_product_quantity(
         return
 
     rows = values[1:] if len(values) > 1 else []
-    row_index = _find_client_row_index(
+    row_index = _find_row_by_client_and_product(
         rows=rows,
         client_name=client_name,
-        sheet_name=sheet_name,
         product_name=product_name,
+        sheet_name=sheet_name,
     )
     if row_index is None:
-        print(f"[SHEETS SKIP] Cliente no encontrado: {client_name}")
+        print(f"[SHEETS SKIP] Cliente no encontrado: {client_name} (producto={product_name})")
         return
 
     col_letter = _to_col_letter(col_index)
@@ -663,42 +662,69 @@ def _sum_active_quantity_from_db(
         db.close()
 
 
+def _normalize_product_key(product_name: str | None) -> str:
+    text = str(product_name or "").strip().lower()
+    normalized = unicodedata.normalize("NFKD", text)
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _normalize_huesos_variant(product_name: str | None) -> str:
+    normalized = _normalize_product_key(product_name)
+    if "aserrin" in normalized:
+        return "aserrin"
+    if "hueso" in normalized:
+        return "huesos"
+    return normalized
+
+
 def _sheet_name_for_product(product_name: str) -> str | None:
-    product = str(product_name or "").strip().upper()
-    if product == "GRASA":
+    normalized = _normalize_huesos_variant(product_name)
+    if normalized == "grasa":
         return "GRASA"
-    if product in {"HUESOS", "ASERRIN"}:
+    if normalized in {"huesos", "aserrin"}:
         return "HUESOS"
     return None
 
 
-def _find_client_row_index(
-    *,
-    rows: list[list[object]],
-    client_name: str,
-    sheet_name: str,
-    product_name: str,
-) -> int | None:
-    target_client = str(client_name or "").strip().lower()
+def _find_all_rows_by_client(rows: list[list[object]], client_name: str) -> list[int]:
+    target_client = _normalize_product_key(client_name)
     matches: list[int] = []
     for i, row in enumerate(rows, start=2):
-        cell = str(row[0]).strip().lower() if row else ""
+        cell = _normalize_product_key(row[0] if row else "")
         if cell == target_client:
             matches.append(i)
+    return matches
 
-    if not matches:
-        return None
 
-    # Caso especial: en hoja HUESOS, CORDIEZ tiene dos filas:
-    # primera para ASERRIN, segunda para HUESOS.
-    if sheet_name == "HUESOS" and target_client == "cordiez" and len(matches) >= 2:
-        target_product = str(product_name or "").strip().upper()
-        if target_product == "ASERRIN":
-            return matches[0]
-        if target_product == "HUESOS":
-            return matches[1]
+def _find_row_by_client(rows: list[list[object]], client_name: str) -> int | None:
+    matches = _find_all_rows_by_client(rows, client_name)
+    return matches[0] if matches else None
 
-    return matches[0]
+
+def _find_row_by_client_and_product(
+    rows: list[list[object]],
+    client_name: str,
+    product_name: str | None,
+    sheet_name: str,
+) -> int | None:
+    target_client = _normalize_product_key(client_name)
+    if sheet_name == "HUESOS" and target_client == "cordiez":
+        matches = _find_all_rows_by_client(rows, client_name)
+        if len(matches) < 2:
+            print("[SHEETS SKIP] CORDIEZ requiere 2 filas en HUESOS")
+            return None
+
+        target_product = _normalize_huesos_variant(product_name)
+        if target_product == "aserrin":
+            row = matches[0]
+            print("CORDIEZ WRITE:", target_product, "\u2192 row", row)
+            return row
+        if target_product == "huesos":
+            row = matches[1]
+            print("CORDIEZ WRITE:", target_product, "\u2192 row", row)
+            return row
+
+    return _find_row_by_client(rows, client_name)
 
 
 def _load_product_cells_for_movement(movement_id: UUID) -> set[tuple[date, str, str]]:

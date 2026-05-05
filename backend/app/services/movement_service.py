@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import logging
 from types import SimpleNamespace
+import unicodedata
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -38,6 +39,22 @@ class MovementNotFoundError(Exception):
 
 class MovementService:
     @staticmethod
+    def _is_product_sheet_supported(product_name: str | None) -> bool:
+        text = str(product_name or "").strip().lower()
+        normalized = "".join(
+            char
+            for char in unicodedata.normalize("NFKD", text)
+            if not unicodedata.combining(char)
+        )
+        if normalized == "grasa":
+            return True
+        if "hueso" in normalized:
+            return True
+        if "aserrin" in normalized:
+            return True
+        return False
+
+    @staticmethod
     def _resolve_source(movement_type: MovementType) -> str:
         if movement_type == MovementType.ENTREGA_DINERO:
             return "app-entrega"
@@ -47,8 +64,8 @@ class MovementService:
     def _extract_product_cells(movement: Movement) -> set[tuple]:
         cells: set[tuple] = set()
         for item in movement.items or []:
-            product_name = (item.product.name or "").strip().upper()
-            if product_name not in {"GRASA", "HUESOS", "ASERRIN"}:
+            product_name = str(item.product.name or "").strip()
+            if not MovementService._is_product_sheet_supported(product_name):
                 continue
             cells.add((movement.date, item.client.name, product_name))
         return cells
