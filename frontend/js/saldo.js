@@ -144,6 +144,8 @@ function normalizarMovimiento(item) {
   var fecha = fechaIsoMov(mov.fecha || mov.Fecha || mov.dia);
   var clase = String(mov.clase || '').trim().toLowerCase();
   var datos = mov.datos;
+  var items = Array.isArray(mov.items) ? mov.items : [];
+  var clientPayments = Array.isArray(mov.client_payments) ? mov.client_payments : [];
   if (typeof datos === 'string') {
     try {
       datos = JSON.parse(datos);
@@ -162,6 +164,8 @@ function normalizarMovimiento(item) {
     kg: kg,
     monto: monto,
     clase: clase,
+    items: items,
+    client_payments: clientPayments,
     datos: (datos && typeof datos === 'object') ? datos : null,
     editable: mov.editable !== false
   };
@@ -1457,6 +1461,12 @@ function prellenarFormularioMovimientoEdicion(root, mov) {
     cliente: clienteReal || '',
     productos: productosCompra
   });
+  console.log('RENDER FORM:', {
+    tipo: tipo,
+    fecha: fecha,
+    cliente: clienteReal || '',
+    productos: productosCompra
+  });
 
   if (tipo === 'compra') {
     setTipo(n, 'Compra');
@@ -1473,7 +1483,17 @@ function prellenarFormularioMovimientoEdicion(root, mov) {
 
   if (tipo === 'descarga') {
     setTipo(n, 'Descarga');
-    if (typeof csSetValue === 'function') csSetValue('mov-prod-' + n, producto || productoDesdeItems || '', true);
+    var productoDescarga = producto || productoDesdeItems || '';
+    if (typeof csSetOptions === 'function') {
+      var opcionesDesc = (typeof PRODUCTOS_DESCARGA !== 'undefined' && Array.isArray(PRODUCTOS_DESCARGA))
+        ? PRODUCTOS_DESCARGA.slice()
+        : [];
+      if (productoDescarga && opcionesDesc.indexOf(productoDescarga) === -1) {
+        opcionesDesc.unshift(productoDescarga);
+      }
+      csSetOptions('mov-prod-' + n, opcionesDesc, productoDescarga, true);
+    }
+    if (typeof csSetValue === 'function') csSetValue('mov-prod-' + n, productoDescarga, true);
     if (typeof csSetValue === 'function') csSetValue('mov-desc-cli-' + n, clienteReal || '', true);
     card.dataset.clienteManual = clienteReal ? '1' : '';
 

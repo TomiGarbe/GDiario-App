@@ -307,6 +307,12 @@ function agregarProductoCompra(n, productoInicial, kgInicial) {
 
   var row = crearFilaCompra(card, productoInicial, kgInicial);
   container.appendChild(row);
+  if (productoInicial && typeof csSetOptions === 'function') {
+    var key = row.dataset.selKey;
+    if (key) {
+      csSetOptions(key, [String(productoInicial).trim()], String(productoInicial).trim(), true);
+    }
+  }
 
   actualizarBotonesQuitarCompra(card);
   actualizarOpcionesProducto(card);
@@ -415,8 +421,11 @@ function actualizarOpcionesProducto(card) {
   if (typeof csSetOptions === 'function') {
     var opcionesDescarga = PRODUCTOS_DESCARGA.slice();
     var actualDesc = typeof csGetValue === 'function' ? csGetValue(keyDesc) : '';
+    if (actualDesc && opcionesDescarga.indexOf(actualDesc) === -1) {
+      opcionesDescarga.unshift(actualDesc);
+    }
     var fallbackDesc = opcionesDescarga[0] || '';
-    var nextDesc = opcionesDescarga.indexOf(actualDesc) !== -1 ? actualDesc : fallbackDesc;
+    var nextDesc = actualDesc || fallbackDesc;
     csSetOptions(keyDesc, opcionesDescarga, nextDesc, true);
   }
 
