@@ -38,6 +38,12 @@ class MovementNotFoundError(Exception):
 
 class MovementService:
     @staticmethod
+    def _resolve_source(movement_type: MovementType) -> str:
+        if movement_type == MovementType.ENTREGA_DINERO:
+            return "app-entrega"
+        return "app"
+
+    @staticmethod
     def _extract_product_cells(movement: Movement) -> set[tuple]:
         cells: set[tuple] = set()
         for item in movement.items or []:
@@ -115,7 +121,7 @@ class MovementService:
             type=movement_type,
             amount=amount,
             description=data.description,
-            source="app",
+            source=MovementService._resolve_source(movement_type),
             updated_at=datetime.now(timezone.utc),
         )
         db.add(movement)
@@ -169,7 +175,7 @@ class MovementService:
         movement.type = movement_type
         movement.amount = amount
         movement.description = data.description
-        movement.source = "app"
+        movement.source = MovementService._resolve_source(movement_type)
         movement.updated_at = datetime.now(timezone.utc)
         movement.deleted_at = None
 
@@ -224,7 +230,7 @@ class MovementService:
         period_id = movement.period_id
         movement.deleted_at = datetime.now(timezone.utc)
         movement.updated_at = movement.deleted_at
-        movement.source = "app"
+        movement.source = MovementService._resolve_source(movement.type)
         db.commit()
 
         sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
