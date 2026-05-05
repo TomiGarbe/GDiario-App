@@ -393,77 +393,22 @@ class SyncService:
                     )
                 )
 
-        existing_items = set(
-            db.execute(
-                select(
-                    MovementItem.movement_id,
-                    MovementItem.client_id,
-                    MovementItem.product_id,
-                    MovementItem.quantity,
-                    MovementItem.unit_price,
-                    MovementItem.subtotal,
-                ).where(MovementItem.movement_id.in_(movement_ids))
-            ).all()
-        )
-        existing_salaries = set(
-            db.execute(
-                select(
-                    MovementSalary.movement_id,
-                    MovementSalary.employee_id,
-                    MovementSalary.subtotal,
-                ).where(MovementSalary.movement_id.in_(movement_ids))
-            ).all()
-        )
-        existing_client_payments = set(
-            db.execute(
-                select(
-                    MovementClientPayment.movement_id,
-                    MovementClientPayment.client_id,
-                    MovementClientPayment.subtotal,
-                ).where(MovementClientPayment.movement_id.in_(movement_ids))
-            ).all()
-        )
+        deleted_items = db.execute(
+            delete(MovementItem).where(MovementItem.movement_id.in_(movement_ids))
+        ).rowcount or 0
+        deleted_salaries = db.execute(
+            delete(MovementSalary).where(MovementSalary.movement_id.in_(movement_ids))
+        ).rowcount or 0
+        deleted_client_payments = db.execute(
+            delete(MovementClientPayment).where(MovementClientPayment.movement_id.in_(movement_ids))
+        ).rowcount or 0
 
-        item_rows_to_insert = [
-            row
-            for row in item_rows
-            if (
-                row["movement_id"],
-                row["client_id"],
-                row["product_id"],
-                row["quantity"],
-                row["unit_price"],
-                row["subtotal"],
-            )
-            not in existing_items
-        ]
-        salary_rows_to_insert = [
-            row
-            for row in salary_rows
-            if (
-                row["movement_id"],
-                row["employee_id"],
-                row["subtotal"],
-            )
-            not in existing_salaries
-        ]
-        client_payment_rows_to_insert = [
-            row
-            for row in client_payment_rows
-            if (
-                row["movement_id"],
-                row["client_id"],
-                row["subtotal"],
-            )
-            not in existing_client_payments
-        ]
-
-        if item_rows_to_insert:
-            db.execute(pg_insert(MovementItem).values(item_rows_to_insert))
-        if salary_rows_to_insert:
-            db.execute(pg_insert(MovementSalary).values(salary_rows_to_insert))
-        if client_payment_rows_to_insert:
-            db.execute(pg_insert(MovementClientPayment).values(client_payment_rows_to_insert))
+        if item_rows:
+            db.execute(pg_insert(MovementItem).values(item_rows))
+        if salary_rows:
+            db.execute(pg_insert(MovementSalary).values(salary_rows))
+        if client_payment_rows:
+            db.execute(pg_insert(MovementClientPayment).values(client_payment_rows))
 
         existing_active_rows = db.execute(
             select(Movement.id, Movement.source).where(
@@ -486,9 +431,9 @@ class SyncService:
             len(movement_list),
             inserted_movements,
             updated_movements,
-            len(item_rows_to_insert),
-            len(salary_rows_to_insert),
-            len(client_payment_rows_to_insert),
+            len(item_rows),
+            len(salary_rows),
+            len(client_payment_rows),
         )
         return {
             "period_id": period_id,
@@ -500,21 +445,21 @@ class SyncService:
             },
             "movement_items": {
                 "received": total_items_received,
-                "inserted": len(item_rows_to_insert),
+                "inserted": len(item_rows),
                 "updated": 0,
-                "deleted": 0,
+                "deleted": deleted_items,
             },
             "movement_salaries": {
                 "received": total_salaries_received,
-                "inserted": len(salary_rows_to_insert),
+                "inserted": len(salary_rows),
                 "updated": 0,
-                "deleted": 0,
+                "deleted": deleted_salaries,
             },
             "movement_client_payments": {
                 "received": total_client_payments_received,
-                "inserted": len(client_payment_rows_to_insert),
+                "inserted": len(client_payment_rows),
                 "updated": 0,
-                "deleted": 0,
+                "deleted": deleted_client_payments,
             },
         }
 

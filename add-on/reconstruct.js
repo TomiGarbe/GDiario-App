@@ -55,11 +55,18 @@ function reconstruirMovimientos() {
     return backendType !== "entrega_dinero";
   });
 
+  const stable = _stabilizeRebuiltMovementIds(
+    rebuiltMovements,
+    allItems,
+    allSalaries,
+    allClientPayments
+  );
+
   return {
-    movements: rebuiltMovements,
-    movement_items: allItems,
-    movement_salaries: allSalaries,
-    movement_client_payments: allClientPayments
+    movements: stable.movements,
+    movement_items: stable.movement_items,
+    movement_salaries: stable.movement_salaries,
+    movement_client_payments: stable.movement_client_payments
   };
 }
 
@@ -370,6 +377,159 @@ function _deduplicateById(movements) {
   });
 
   return out;
+}
+
+function buildKey(mov, itemSignature) {
+  const type = _asCleanString(mov && mov.type).toLowerCase();
+  const base = [
+    _safeDateKey(mov && mov.date),
+    type,
+    _asCleanString(mov && mov.client).toLowerCase()
+  ];
+
+  if (type === "compra" || type === "venta") {
+    return base.join("|");
+  }
+
+  base.push(_asCleanString(mov && mov.description).toLowerCase());
+  base.push(_asCleanString(itemSignature));
+  return base.join("|");
+}
+
+function _safeDateKey(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (!(d instanceof Date) || isNaN(d.getTime())) return "";
+  return _toDateKey(d);
+}
+
+function _stabilizeRebuiltMovementIds(movements, items, salaries, clientPayments) {
+  const existingMovements = readMovements();
+  const existingItems = _readMovementItemsSheet();
+  const existingClientPayments = _readMovementClientPaymentsSheet();
+  const existingByKey = _indexExistingMovementsByKey(existingMovements, existingItems, existingClientPayments);
+
+  const newItemsByMovement = _groupItemsByMovement(items);
+  const newClientByMovement = _groupClientByMovement(items, clientPayments);
+  const idRemap = {};
+  const usedIds = {};
+  const outMovements = [];
+
+  (movements || []).forEach((movement) => {
+    const prevId = _asCleanString(movement && movement.id);
+    const enriched = {
+      id: prevId,
+      type: movement && movement.type,
+      date: movement && movement.date,
+      amount: movement && movement.amount,
+      description: movement && movement.description,
+      client: _asCleanString((movement && movement.client) || newClientByMovement[prevId])
+    };
+    const key = buildKey(enriched, newItemsByMovement[prevId]);
+    const bucket = existingByKey[key] || [];
+    let reusedId = "";
+
+    while (bucket.length) {
+      const candidateId = bucket.shift();
+      if (!usedIds[candidateId]) {
+        reusedId = candidateId;
+        usedIds[candidateId] = true;
+        break;
+      }
+    }
+
+    const finalId = reusedId || (_isUuidV4(prevId) ? prevId : Utilities.getUuid());
+    idRemap[prevId] = finalId;
+    outMovements.push({
+      id: finalId,
+      type: movement && movement.type,
+      date: movement && movement.date,
+      amount: movement && movement.amount,
+      description: movement && movement.description
+    });
+  });
+
+  const outItems = (items || []).map((it) => ({
+    ...it,
+    movement_id: idRemap[_asCleanString(it && it.movement_id)] || _asCleanString(it && it.movement_id)
+  }));
+  const outSalaries = (salaries || []).map((s) => ({
+    ...s,
+    movement_id: idRemap[_asCleanString(s && s.movement_id)] || _asCleanString(s && s.movement_id)
+  }));
+  const outClientPayments = (clientPayments || []).map((cp) => ({
+    ...cp,
+    movement_id: idRemap[_asCleanString(cp && cp.movement_id)] || _asCleanString(cp && cp.movement_id)
+  }));
+
+  return {
+    movements: outMovements,
+    movement_items: outItems,
+    movement_salaries: outSalaries,
+    movement_client_payments: outClientPayments
+  };
+}
+
+function _indexExistingMovementsByKey(existingMovements, existingItems, existingClientPayments) {
+  const byKey = {};
+  const itemsByMovement = _groupItemsByMovement(existingItems);
+  const clientByMovement = _groupClientByMovement(existingItems, existingClientPayments);
+
+  (existingMovements || []).forEach((movement) => {
+    const id = _asCleanString(movement && movement.id);
+    if (!id) return;
+    const enriched = {
+      id,
+      type: movement && movement.type,
+      date: movement && movement.date,
+      amount: movement && movement.amount,
+      description: movement && movement.description,
+      client: _asCleanString((movement && movement.client) || clientByMovement[id])
+    };
+    const key = buildKey(enriched, itemsByMovement[id]);
+    if (!byKey[key]) byKey[key] = [];
+    byKey[key].push(id);
+  });
+
+  return byKey;
+}
+
+function _groupItemsByMovement(items) {
+  const grouped = {};
+  (items || []).forEach((it) => {
+    const movementId = _asCleanString(it && it.movement_id);
+    if (!movementId) return;
+    if (!grouped[movementId]) grouped[movementId] = [];
+    grouped[movementId].push({
+      product: _asCleanString(it && it.product).toLowerCase(),
+      quantity: _toNumber(it && it.quantity)
+    });
+  });
+
+  const signatureByMovement = {};
+  Object.keys(grouped).forEach((movementId) => {
+    const parts = grouped[movementId]
+      .map((p) => `${p.product}:${_isValidNumber(p.quantity) ? p.quantity : ""}`)
+      .sort();
+    signatureByMovement[movementId] = parts.join(",");
+  });
+  return signatureByMovement;
+}
+
+function _groupClientByMovement(items, clientPayments) {
+  const clientByMovement = {};
+  (items || []).forEach((it) => {
+    const movementId = _asCleanString(it && it.movement_id);
+    if (!movementId || clientByMovement[movementId]) return;
+    const client = _asCleanString(it && it.client);
+    if (client) clientByMovement[movementId] = client;
+  });
+  (clientPayments || []).forEach((cp) => {
+    const movementId = _asCleanString(cp && cp.movement_id);
+    if (!movementId || clientByMovement[movementId]) return;
+    const client = _asCleanString((cp && cp.client_name) || (cp && cp.client));
+    if (client) clientByMovement[movementId] = client;
+  });
+  return clientByMovement;
 }
 
 // ========================= MERGE FINAL =========================
