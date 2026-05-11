@@ -79,14 +79,31 @@ class MovementService:
         if movement_type not in (MovementType.COMPRA, MovementType.VENTA):
             return
 
-        clients = {
-            (str(item.client or "").strip().lower())
-            for item in (data.items or [])
-            if str(item.client or "").strip()
+        normalized_items = []
+
+        for item in (data.items or []):
+            client = str(item.client or "").strip().lower()
+            product = str(item.product or "").strip().lower()
+
+            if not client:
+                continue
+
+            normalized_items.append({
+                "client": client,
+                "product": product,
+            })
+
+        # evitar validar duplicados repetidos dentro del mismo request
+        unique_items = {
+            (
+                item["client"],
+                item["product"] if movement_type == MovementType.VENTA else None,
+            )
+            for item in normalized_items
         }
 
-        for client in clients:
-            existing = db.scalar(
+        for client, product in unique_items:
+            query = (
                 select(Movement)
                 .join(MovementItem, MovementItem.movement_id == Movement.id)
                 .join(Client, Client.id == MovementItem.client_id)
@@ -96,8 +113,16 @@ class MovementService:
                     Movement.type == movement_type,
                     func.lower(func.trim(Client.name)) == client,
                 )
-                .order_by(Movement.created_at.asc())
-                .limit(1)
+            )
+
+            # SOLO ventas validan producto
+            if movement_type == MovementType.VENTA:
+                query = query.join(Product, Product.id == MovementItem.product_id).where(
+                    func.lower(func.trim(Product.name)) == product
+                )
+
+            existing = db.scalar(
+                query.order_by(Movement.created_at.asc()).limit(1)
             )
 
             if existing is not None:
@@ -106,6 +131,7 @@ class MovementService:
                     detail={
                         "error": "MOVEMENT_ALREADY_EXISTS",
                         "client": client,
+                        "product": product if movement_type == MovementType.VENTA else None,
                         "movement_id": str(existing.id),
                     },
                 )

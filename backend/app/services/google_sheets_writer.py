@@ -189,9 +189,10 @@ def append_client_payments_to_cuentas(sheet_id: str, movement: Movement) -> None
 
     service = get_sheets_service()
     for payment in movement.client_payments:
+        clientName = _normalize_name(payment.client.name)
         values = [[
             str(movement.date),
-            payment.client.name,
+            clientName,
             "Pago de Fabian",
             "",
             "",
@@ -214,7 +215,7 @@ def _movement_type_key(movement: Movement) -> str:
     return str(raw_type or "").strip().lower()
 
 
-def _normalize_employee_name(value: str | None) -> str:
+def _normalize_name(value: str | None) -> str:
     return str(value or "").strip().upper()
 
 
@@ -277,7 +278,7 @@ def _upsert_salary_row(
 
 
 def append_salary_detail_to_salaries(sheet_id: str, movement: Movement, salary) -> None:
-    employee = _normalize_employee_name(_extract_salary_employee_name(salary))
+    employee = _normalize_name(_extract_salary_employee_name(salary))
     if not employee:
         return
 
@@ -304,7 +305,7 @@ def append_salary_detail_to_salaries(sheet_id: str, movement: Movement, salary) 
 
 
 def append_salary_summary_to_sueldos(sheet_id: str, movement: Movement, salary) -> None:
-    employee = _normalize_employee_name(_extract_salary_employee_name(salary))
+    employee = _normalize_name(_extract_salary_employee_name(salary))
     if not employee:
         return
 
@@ -430,7 +431,7 @@ def find_rows_by_movement_id_and_employee(
     ).execute()
     values = result.get("values", [])
     target_movement_id = str(movement_id).strip()
-    target_employee = _normalize_employee_name(employee_name)
+    target_employee = _normalize_name(employee_name)
     rows: list[int] = []
 
     for i, row in enumerate(values):
@@ -441,7 +442,7 @@ def find_rows_by_movement_id_and_employee(
 
         row_movement_id = str(row[movement_id_column_index]).strip()
         row_employee = (
-            _normalize_employee_name(row[employee_column_index])
+            _normalize_name(row[employee_column_index])
             if employee_column_index < len(row)
             else ""
         )
