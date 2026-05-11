@@ -22,6 +22,10 @@ function isValidUUID(value) {
   return UUID_V4_REGEX.test(value); 
 }
 
+function normalize(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function reconstruirMovimientos() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -152,7 +156,11 @@ function procesarProductos(ss) {
         }
 
         const dateKey = _toDateKey(fecha);
-        const groupKey = `${dateKey}|${cliente}|${tipo}`;
+        const isVenta = normalize(tipo) === "venta";
+        const productKey = normalize(producto);
+        const groupKey = isVenta
+          ? `${dateKey}|${cliente}|${tipo}|${productKey}`
+          : `${dateKey}|${cliente}|${tipo}`;
         if (!productosMovementMap[groupKey] || !_isUuidV4(productosMovementMap[groupKey])) {
           productosMovementMap[groupKey] = Utilities.getUuid();
         }
@@ -380,18 +388,22 @@ function _deduplicateById(movements) {
 }
 
 function buildKey(mov, itemSignature) {
-  const type = _asCleanString(mov && mov.type).toLowerCase();
+  const type = normalize(mov && mov.type);
   const base = [
     _safeDateKey(mov && mov.date),
     type,
-    _asCleanString(mov && mov.client).toLowerCase()
+    normalize(mov && mov.client)
   ];
 
-  if (type === "compra" || type === "venta") {
+  if (type === "compra") {
+    return base.join("|");
+  }
+  if (type === "venta") {
+    base.push(normalize(itemSignature));
     return base.join("|");
   }
 
-  base.push(_asCleanString(mov && mov.description).toLowerCase());
+  base.push(normalize(mov && mov.description));
   base.push(_asCleanString(itemSignature));
   return base.join("|");
 }
@@ -500,7 +512,7 @@ function _groupItemsByMovement(items) {
     if (!movementId) return;
     if (!grouped[movementId]) grouped[movementId] = [];
     grouped[movementId].push({
-      product: _asCleanString(it && it.product).toLowerCase(),
+      product: normalize(it && it.product),
       quantity: _toNumber(it && it.quantity)
     });
   });
@@ -723,17 +735,17 @@ function _getPriceForDate(prices, movementDate) {
 }
 
 function _buildPriceKey(clientName, productName) {
-  return `${String(clientName || "").trim().toLowerCase()}|${String(productName || "").trim().toLowerCase()}`;
+  return `${normalize(clientName)}|${normalize(productName)}`;
 }
 
 function _isTrue(value) {
   if (value === true) return true;
-  if (typeof value === "string") return value.trim().toLowerCase() === "true";
+  if (typeof value === "string") return normalize(value) === "true";
   return false;
 }
 
 function _esClienteSinMontoReconstruct(nombre) {
-  const key = String(nombre || "").trim().toLowerCase();
+  const key = normalize(nombre);
   return !!(key && CLIENTES_SIN_MONTO_RECONSTRUCT[key]);
 }
 
