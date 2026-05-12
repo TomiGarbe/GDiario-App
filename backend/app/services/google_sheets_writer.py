@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 import logging
 import unicodedata
@@ -20,6 +20,7 @@ from app.models.movement import Movement
 from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
 from app.models.product import Product
+from app.utils.sheets_date_utils import normalize_sheet_date_key, normalize_sheet_day_month_key
 
 logger = logging.getLogger(__name__)
 
@@ -556,39 +557,6 @@ def test_sheets(sheet_id: str) -> None:
         raise
 
 
-def _normalize_date_key(value) -> str:
-    if isinstance(value, datetime):
-        return value.date().strftime("%d/%m/%Y")
-    if isinstance(value, date):
-        return value.strftime("%d/%m/%Y")
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    if "T" in text:
-        text = text.split("T", 1)[0]
-    if " " in text:
-        text = text.split(" ", 1)[0]
-
-    for pattern in ("%Y-%m-%d", "%d/%m/%Y"):
-        try:
-            return datetime.strptime(text, pattern).strftime("%d/%m/%Y")
-        except ValueError:
-            pass
-
-    return text
-
-
-def _normalize_date_key_day_month(value) -> str:
-    normalized = _normalize_date_key(value)
-    if not normalized:
-        return ""
-    try:
-        parsed = datetime.strptime(normalized, "%d/%m/%Y")
-        return parsed.strftime("%d/%m")
-    except ValueError:
-        return normalized
-
-
 def _to_col_letter(col_index_zero_based: int) -> str:
     n = col_index_zero_based + 1
     letters: list[str] = []
@@ -638,17 +606,34 @@ def _recalculate_product_quantity(
         values = [[]]
 
     header = values[0] if values else []
-    target_date = _normalize_date_key(movement_date)
+    target_date = normalize_sheet_date_key(movement_date)
+    if not target_date:
+        logger.warning(
+            "[SHEETS SKIP] Invalid movement_date while recalculating: raw=%r (sheet=%s client=%s product=%s)",
+            movement_date,
+            sheet_name,
+            client_name,
+            product_name,
+        )
+        return
 
     col_index = None
     for i, cell in enumerate(header):
-        if _normalize_date_key(cell) == target_date:
+        normalized_cell_date = normalize_sheet_date_key(cell)
+        if not normalized_cell_date and str(cell or "").strip():
+            logger.warning(
+                "[SHEETS DATE] Header cell has invalid date format: sheet=%s col=%s raw=%r",
+                sheet_name,
+                i,
+                cell,
+            )
+        if normalized_cell_date == target_date:
             col_index = i
             break
     if col_index is None:
-        target_day_month = _normalize_date_key_day_month(movement_date)
+        target_day_month = normalize_sheet_day_month_key(movement_date)
         for i, cell in enumerate(header):
-            if _normalize_date_key_day_month(cell) == target_day_month:
+            if normalize_sheet_day_month_key(cell) == target_day_month:
                 col_index = i
                 logger.info(
                     "[SHEETS PRODUCT] date fallback matched sheet=%s target=%s header_cell=%s col_index=%s",

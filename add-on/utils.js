@@ -1,5 +1,5 @@
-// ================================================================
-// Utilidades.js — Helpers: búsqueda de archivos por mes, triggers y fechas
+﻿// ================================================================
+// Utilidades.js — Helpers: busqueda de archivos por mes, triggers y fechas
 // ================================================================
 
 const MESES = [
@@ -7,20 +7,43 @@ const MESES = [
   "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"
 ];
 
+function normalizarTexto(valor) {
+  return String(valor || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
 // Parsea el nombre del archivo (formato: "NN MES AAAA") y devuelve sus partes
 function parsearNombreArchivo(ss) {
-  const partes = ss.getName().split(" ");
+  const nombre = String(ss.getName() || "").trim();
+  const match = nombre.match(/^(\d{1,2})\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)\s+(\d{4})$/);
+  if (!match) {
+    throw new Error("Nombre de archivo invalido. Formato esperado: 'NN MES AAAA'");
+  }
+
+  const numero = parseInt(match[1], 10);
+  const mesOriginal = normalizarTexto(match[2]);
+  const mesIndex = MESES.findIndex((m) => normalizarTexto(m) === mesOriginal);
+  const anio = parseInt(match[3], 10);
+
+  if (mesIndex < 0) {
+    throw new Error("Mes no reconocido en nombre de archivo: " + match[2]);
+  }
+
   return {
-    numero:   parseInt(partes[0]),
-    mes:      partes[1],
-    mesIndex: MESES.indexOf(partes[1]),
-    anio:     parseInt(partes[2])
+    numero: numero,
+    mes: MESES[mesIndex],
+    mesIndex: mesIndex,
+    anio: anio
   };
 }
 
 function buscarArchivoPorNombre(nombre) {
+  const escaped = String(nombre || "").replace(/'/g, "\\'");
   const res = Drive.Files.list({
-    q: `name='${nombre}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
+    q: `name='${escaped}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
     supportsAllDrives: true,
     includeItemsFromAllDrives: true,
     corpora: "allDrives"
@@ -32,17 +55,24 @@ function buscarArchivoPorNombre(nombre) {
 
 function obtenerArchivoMesAnterior() {
   const id = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_OBJETIVO");
-  const ss = SpreadsheetApp.openById(id);
-  const { numero, mesIndex, anio } = parsearNombreArchivo(ss);
+  const ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  const { mesIndex, anio } = parsearNombreArchivo(ss);
 
   let mesAnterior = mesIndex - 1;
   let anioAnterior = anio;
-  if (mesAnterior < 0) { mesAnterior = 11; anioAnterior--; }
+  if (mesAnterior < 0) {
+    mesAnterior = 11;
+    anioAnterior--;
+  }
 
-  const nombre = `${String(numero - 1).padStart(2, '0')} ${MESES[mesAnterior]} ${anioAnterior}`;
+  const numeroAnterior = mesAnterior + 1;
+  const nombre = `${String(numeroAnterior).padStart(2, '0')} ${MESES[mesAnterior]} ${anioAnterior}`;
+  Logger.log("Buscando archivo mes anterior. Actual=%s, Candidato=%s", ss.getName(), nombre);
+
   const archivo = buscarArchivoPorNombre(nombre);
+  if (!archivo) throw new Error("No se encontro el archivo del mes anterior: " + nombre);
 
-  if (!archivo) throw new Error("No se encontró el archivo del mes anterior");
+  Logger.log("Archivo mes anterior encontrado: %s (%s)", archivo.getName(), archivo.getId());
   return archivo;
 }
 

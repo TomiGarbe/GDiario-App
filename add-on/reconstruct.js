@@ -119,15 +119,16 @@ function procesarProductos(ss) {
 
       for (let col = COL_INICIO; col < fechas.length - 2; col++) {
         const fecha = fechas[col];
+        const fechaDate = _parseOperationalDate(fecha, `procesarProductos:${cfg.nombre}:col=${col}`);
         const cantidad = _toNumber(fila[col]);
-        if (!_isValidDate(fecha) || !_isValidNumber(cantidad) || cantidad === 0) continue;
+        if (!fechaDate || !_isValidNumber(cantidad) || cantidad === 0) continue;
 
         const clienteSinMonto = _esClienteSinMontoReconstruct(cliente);
         let unitPrice = getPrice({
           pricesMap,
           client_name: cliente,
           product_name: producto,
-          date: fecha
+          date: fechaDate
         });
 
         if (clienteSinMonto) {
@@ -135,11 +136,11 @@ function procesarProductos(ss) {
         }
 
         if (!_isValidNumber(unitPrice) || unitPrice < 0) {
-          errors.push(`Missing price for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}`);
+          errors.push(`Missing price for client ${cliente}, product ${producto}, date ${_toDateKey(fechaDate)}`);
           continue;
         }
         if (unitPrice === null && !clienteSinMonto) {
-          errors.push(`Missing price for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}`);
+          errors.push(`Missing price for client ${cliente}, product ${producto}, date ${_toDateKey(fechaDate)}`);
           continue;
         }
 
@@ -151,11 +152,11 @@ function procesarProductos(ss) {
         const roundedSubtotal = Math.round(subtotal * 100) / 100;
         const expectedSubtotal = Math.round((cantidad * unitPrice) * 100) / 100;
         if (!clienteSinMonto && roundedSubtotal !== expectedSubtotal) {
-          errors.push(`Subtotal mismatch for client ${cliente}, product ${producto}, date ${_toDateKey(fecha)}: subtotal=${roundedSubtotal} expected=${expectedSubtotal}`);
+          errors.push(`Subtotal mismatch for client ${cliente}, product ${producto}, date ${_toDateKey(fechaDate)}: subtotal=${roundedSubtotal} expected=${expectedSubtotal}`);
           continue;
         }
 
-        const dateKey = _toDateKey(fecha);
+        const dateKey = _toDateKey(fechaDate);
         const isVenta = normalize(tipo) === "venta";
         const productKey = normalize(producto);
         const groupKey = isVenta
@@ -172,7 +173,7 @@ function procesarProductos(ss) {
               id: movementId,
               type: tipo,
               client: cliente,
-              date: new Date(fecha),
+              date: fechaDate,
               amount: 0,
               description: `${tipo} productos`
             },
@@ -234,12 +235,13 @@ function procesarSueldos(ss) {
     const tipo = _asCleanString(row[2]);
     const concepto = row[3];
     const amount = parseNumber(row[4]);
+    const parsedDate = _parseOperationalDate(date, `procesarSueldos:row=${i + 1}`);
 
     if (!concepto || !concepto.toString().toLowerCase().includes("adelanto")) {
       continue;
     }
     if (!employee) continue;
-    if (!isValidMovementRow({ date, amount })) continue;
+    if (!isValidMovementRow({ date: parsedDate, amount })) continue;
 
     let id = _asCleanString(row[5]);
     if (!_isUuidV4(id)) {
@@ -250,7 +252,7 @@ function procesarSueldos(ss) {
     movements.push({
       id,
       type: "Sueldo",
-      date,
+      date: parsedDate,
       amount,
       description: concepto || "Sueldo"
     });
@@ -298,8 +300,9 @@ function procesarGastos(ss) {
     const date = row[0];
     const tipo = _asCleanString(row[1]);
     const amount = parseNumber(row[2]);
+    const parsedDate = _parseOperationalDate(date, `procesarGastos:row=${rowNumber}`);
 
-    if (!isValidMovementRow({ date, amount })) return;
+    if (!isValidMovementRow({ date: parsedDate, amount })) return;
 
     let id = _asCleanString(row[3]);
     if (!_isUuidV4(id)) {
@@ -310,7 +313,7 @@ function procesarGastos(ss) {
     movements.push({
       id,
       type: "Gasto",
-      date,
+      date: parsedDate,
       amount,
       description: tipo
     });
@@ -340,10 +343,11 @@ function procesarPagosClientes(ss) {
     const client = normalizeName(row[1]);
     const concepto = _asCleanString(row[2]);
     const haber = parseNumber(row[8]);
+    const parsedDate = _parseOperationalDate(date, `procesarPagosClientes:row=${i + 1}`);
 
     if (concepto !== "Pago de Fabian") continue;
     if (!client) continue;
-    if (!isValidMovementRow({ date, amount: haber })) continue;
+    if (!isValidMovementRow({ date: parsedDate, amount: haber })) continue;
 
     let id = _asCleanString(row[9]);
     if (!_isUuidV4(id)) {
@@ -355,7 +359,7 @@ function procesarPagosClientes(ss) {
       id,
       type: "Pago",
       client,
-      date,
+      date: parsedDate,
       amount: haber,
       description: concepto
     });
@@ -409,9 +413,7 @@ function buildKey(mov, itemSignature) {
 }
 
 function _safeDateKey(value) {
-  const d = value instanceof Date ? value : new Date(value);
-  if (!(d instanceof Date) || isNaN(d.getTime())) return "";
-  return _toDateKey(d);
+  return _toDateKey(value);
 }
 
 function _stabilizeRebuiltMovementIds(movements, items, salaries, clientPayments) {
@@ -628,7 +630,7 @@ function isSummaryRow(row) {
 }
 
 function isValidMovementRow({ date, amount }) {
-  if (!date) return false;
+  if (!_parseOperationalDate(date, "isValidMovementRow")) return false;
   if (amount === null || amount === undefined || amount === "") return false;
   const n = parseNumber(amount);
   if (!Number.isFinite(n)) return false;
@@ -646,11 +648,13 @@ function _parseRowWithOptionalId(row, dateIndexWithoutId) {
 }
 
 function _isValidDate(value) {
-  return value instanceof Date && !isNaN(value.getTime());
+  return !!_parseOperationalDate(value, "_isValidDate");
 }
 
 function _toDateKey(value) {
-  return new Date(value).toISOString().slice(0, 10);
+  const parsed = _parseOperationalDate(value, "_toDateKey");
+  if (!parsed) return "";
+  return Utilities.formatDate(parsed, Session.getScriptTimeZone(), "yyyy-MM-dd");
 }
 
 function _toNumber(value) {
@@ -673,7 +677,7 @@ function _buildPricesMap(preciosData) {
     // PRECIOS: Cliente | Producto | Fecha Desde | Precio
     const clientName = normalizeName(fila[0]);
     const productName = normalizeName(fila[1]);
-    const startDate = fila[2] instanceof Date ? fila[2] : new Date(fila[2]);
+    const startDate = _parseOperationalDate(fila[2], "_buildPricesMap:PRECIOS.FechaDesde");
     const price = parseNumber(fila[3]);
 
     if (!clientName || !productName || !_isValidDate(startDate) || !_isValidNumber(price) || price < 0) return;
@@ -697,9 +701,9 @@ function getPrice(args) {
   const pricesMap = (args && args.pricesMap) || {};
   const clientName = normalizeName(args && args.client_name);
   const productName = normalizeName(args && args.product_name);
-  const date = args && args.date instanceof Date ? args.date : new Date(args && args.date);
+  const date = _parseOperationalDate(args && args.date, "getPrice:movementDate");
 
-  if (!clientName || !productName || isNaN(date.getTime())) return null;
+  if (!clientName || !productName || !date || isNaN(date.getTime())) return null;
   const key = _buildPriceKey(clientName, productName);
   const prices = pricesMap[key];
   if (!prices || prices.length === 0) return null;
@@ -736,6 +740,80 @@ function _getPriceForDate(prices, movementDate) {
 
 function _buildPriceKey(clientName, productName) {
   return `${normalize(clientName)}|${normalize(productName)}`;
+}
+
+function _parseOperationalDate(value, context) {
+  const ctx = context || "reconstruct";
+
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) {
+      Logger.log(`[RECONSTRUCT DATE] Invalid Date object. context=${ctx}`);
+      return null;
+    }
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const ddmmyyyy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+  const ddmmyy = /^(\d{1,2})\/(\d{1,2})\/(\d{2})$/;
+  let match = raw.match(ddmmyyyy);
+
+  if (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+    const parsed = _buildDateStrict(day, month, year);
+    if (!parsed) {
+      Logger.log(`[RECONSTRUCT DATE] Invalid dd/mm/yyyy date. context=${ctx} raw=${raw}`);
+    }
+    return parsed;
+  }
+
+  match = raw.match(ddmmyy);
+  if (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = 2000 + Number(match[3]);
+    const parsed = _buildDateStrict(day, month, year);
+    if (!parsed) {
+      Logger.log(`[RECONSTRUCT DATE] Invalid dd/mm/yy date. context=${ctx} raw=${raw} interpretedYear=${year}`);
+    }
+    return parsed;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const parts = raw.split("-");
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const day = Number(parts[2]);
+    const parsed = _buildDateStrict(day, month, year);
+    if (!parsed) {
+      Logger.log(`[RECONSTRUCT DATE] Invalid yyyy-mm-dd date. context=${ctx} raw=${raw}`);
+    }
+    return parsed;
+  }
+
+  const fallback = new Date(raw);
+  if (isNaN(fallback.getTime())) {
+    Logger.log(`[RECONSTRUCT DATE] Unsupported date format. context=${ctx} raw=${raw}`);
+    return null;
+  }
+  return new Date(fallback.getFullYear(), fallback.getMonth(), fallback.getDate());
+}
+
+function _buildDateStrict(day, month, year) {
+  if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return null;
+  const monthIndex = month - 1;
+  const candidate = new Date(year, monthIndex, day);
+  if (isNaN(candidate.getTime())) return null;
+  if (candidate.getFullYear() !== year || candidate.getMonth() !== monthIndex || candidate.getDate() !== day) return null;
+  return candidate;
 }
 
 function _isTrue(value) {
