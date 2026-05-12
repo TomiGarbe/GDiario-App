@@ -4,6 +4,7 @@ import json
 from functools import lru_cache
 from datetime import date, datetime
 from decimal import Decimal
+import logging
 import unicodedata
 from uuid import UUID
 
@@ -19,6 +20,8 @@ from app.models.movement import Movement
 from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
 from app.models.product import Product
+
+logger = logging.getLogger(__name__)
 
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 DELETE_MOVEMENT_SHEETS = [
@@ -133,28 +136,58 @@ def append_items(sheet_id: str, items: list[MovementItem]) -> None:
 
 def append_items_to_product_sheets(sheet_id: str, movement: Movement) -> None:
     if not movement.items:
+        logger.info(
+            "[SHEETS PRODUCT] movement_id=%s type=%s items=0 (skip)",
+            movement.id,
+            _movement_type_key(movement),
+        )
         return
 
     service = get_sheets_service()
     touched: set[tuple[date, str, str]] = set()
+    logger.info(
+        "[SHEETS PRODUCT] movement_id=%s type=%s items=%s",
+        movement.id,
+        _movement_type_key(movement),
+        len(movement.items or []),
+    )
     for item in movement.items:
         product_name = str(item.product.name or "").strip()
-        if _sheet_name_for_product(product_name) is None:
+        target_sheet = _sheet_name_for_product(product_name)
+        logger.info(
+            "[SHEETS PRODUCT] resolve movement_id=%s client=%s product=%s target_sheet=%s date=%s",
+            movement.id,
+            item.client.name,
+            product_name,
+            target_sheet,
+            movement.date,
+        )
+        if target_sheet is None:
             continue
         touched.add((movement.date, item.client.name, product_name))
     for movement_date, client_name, product_name in touched:
         sheet_name = _sheet_name_for_product(product_name)
         if sheet_name is None:
             continue
-        _recalculate_product_quantity(
-            service=service,
-            spreadsheet_id=sheet_id,
-            sheet_name=sheet_name,
-            movement_date=movement_date,
-            client_name=client_name,
-            product_name=product_name,
-            period_id=movement.period_id,
-        )
+        try:
+            _recalculate_product_quantity(
+                service=service,
+                spreadsheet_id=sheet_id,
+                sheet_name=sheet_name,
+                movement_date=movement_date,
+                client_name=client_name,
+                product_name=product_name,
+                period_id=movement.period_id,
+            )
+        except Exception:
+            logger.exception(
+                "[SHEETS PRODUCT] failed movement_id=%s date=%s client=%s product=%s sheet=%s",
+                movement.id,
+                movement_date,
+                client_name,
+                product_name,
+                sheet_name,
+            )
 
 
 def append_client_payments(sheet_id: str, payments: list[MovementClientPayment]) -> None:
@@ -545,6 +578,17 @@ def _normalize_date_key(value) -> str:
     return text
 
 
+def _normalize_date_key_day_month(value) -> str:
+    normalized = _normalize_date_key(value)
+    if not normalized:
+        return ""
+    try:
+        parsed = datetime.strptime(normalized, "%d/%m/%Y")
+        return parsed.strftime("%d/%m")
+    except ValueError:
+        return normalized
+
+
 def _to_col_letter(col_index_zero_based: int) -> str:
     n = col_index_zero_based + 1
     letters: list[str] = []
@@ -577,6 +621,14 @@ def _recalculate_product_quantity(
     product_name: str,
     period_id: int,
 ) -> None:
+    logger.info(
+        "[SHEETS PRODUCT] recalc start sheet=%s date=%s client=%s product=%s period_id=%s",
+        sheet_name,
+        movement_date,
+        client_name,
+        product_name,
+        period_id,
+    )
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
         range=f"{sheet_name}!A:ZZ",
@@ -594,7 +646,20 @@ def _recalculate_product_quantity(
             col_index = i
             break
     if col_index is None:
-        print(f"[SHEETS SKIP] Fecha no encontrada: {target_date}")
+        target_day_month = _normalize_date_key_day_month(movement_date)
+        for i, cell in enumerate(header):
+            if _normalize_date_key_day_month(cell) == target_day_month:
+                col_index = i
+                logger.info(
+                    "[SHEETS PRODUCT] date fallback matched sheet=%s target=%s header_cell=%s col_index=%s",
+                    sheet_name,
+                    target_day_month,
+                    cell,
+                    i,
+                )
+                break
+    if col_index is None:
+        logger.warning("[SHEETS SKIP] Fecha no encontrada: %s (sheet=%s)", target_date, sheet_name)
         return
 
     rows = values[1:] if len(values) > 1 else []
@@ -605,7 +670,12 @@ def _recalculate_product_quantity(
         sheet_name=sheet_name,
     )
     if row_index is None:
-        print(f"[SHEETS SKIP] Cliente no encontrado: {client_name} (producto={product_name})")
+        logger.warning(
+            "[SHEETS SKIP] Cliente no encontrado: %s (producto=%s, sheet=%s)",
+            client_name,
+            product_name,
+            sheet_name,
+        )
         return
 
     col_letter = _to_col_letter(col_index)
@@ -614,6 +684,13 @@ def _recalculate_product_quantity(
         movement_date=movement_date,
         client_name=client_name,
         product_name=product_name,
+    )
+    logger.info(
+        "[SHEETS PRODUCT] recalc resolved sheet=%s cell=%s row=%s total=%s",
+        sheet_name,
+        col_letter,
+        row_index,
+        total_quantity,
     )
 
     cell_ref = f"{sheet_name}!{col_letter}{row_index}"
@@ -643,8 +720,8 @@ def _sum_active_quantity_from_db(
     db = SessionLocal()
     try:
         normalized_client = str(client_name or "").strip().lower()
-        normalized_product = str(product_name or "").strip().lower()
-        total = db.execute(
+        normalized_product = _normalize_huesos_variant(product_name)
+        base_query = (
             select(func.coalesce(func.sum(MovementItem.quantity), 0))
             .select_from(MovementItem)
             .join(Movement, Movement.id == MovementItem.movement_id)
@@ -655,9 +732,19 @@ def _sum_active_quantity_from_db(
                 Movement.period_id == period_id,
                 Movement.date == movement_date,
                 func.lower(func.trim(Client.name)) == normalized_client,
-                func.lower(func.trim(Product.name)) == normalized_product,
             )
-        ).scalar_one()
+        )
+
+        if normalized_product == "grasa":
+            product_filter = func.lower(func.trim(Product.name)) == "grasa"
+        elif normalized_product == "aserrin":
+            product_filter = func.lower(func.trim(Product.name)).contains("aserrin")
+        elif normalized_product == "huesos":
+            product_filter = func.lower(func.trim(Product.name)).contains("hueso")
+        else:
+            product_filter = func.lower(func.trim(Product.name)) == str(product_name or "").strip().lower()
+
+        total = db.execute(base_query.where(product_filter)).scalar_one()
         return Decimal(total or 0)
     finally:
         db.close()
