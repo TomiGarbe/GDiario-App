@@ -1,4 +1,4 @@
-function onOpen(e) {}
+﻿function onOpen(e) {}
 function onInstall(e) { onOpen(e); }
 
 function homepage() {
@@ -6,16 +6,16 @@ function homepage() {
     .setHeader(
       CardService.newCardHeader()
         .setTitle('Sistema Detalles Clientes')
-        .setSubtitle('Actualización de movimientos')
+        .setSubtitle('ActualizaciÃ³n de movimientos')
     )
     .addSection(
       CardService.newCardSection()
-        .addWidget(btn('💰 Importar saldo inicial', 'accionImportarSaldoInicial'))
-        .addWidget(btn('🔄 Actualizar detalle del mes', 'accionActualizarDetalle'))
-        .addWidget(btn('👷 Generar resumen de sueldos', 'accionResumenSueldos'))
-        .addWidget(btn('🧱 Reconstruir movimientos', 'accionReconstruirMovimientos'))
-        .addWidget(btn('☁️ Sync a DB', 'accionSyncToBackend'))
-        .addWidget(btn('🔐 Actualizar permisos', 'accionActualizarPermisos'))
+        .addWidget(btn('ðŸ’° Importar saldo inicial', 'accionImportarSaldoInicial'))
+        .addWidget(btn('ðŸ”„ Actualizar detalle del mes', 'accionActualizarDetalle'))
+        .addWidget(btn('ðŸ‘· Generar resumen de sueldos', 'accionResumenSueldos'))
+        .addWidget(btn('ðŸ§± Reconstruir movimientos', 'accionReconstruirMovimientos'))
+        .addWidget(btn('â˜ï¸ Sync a DB', 'accionSyncToBackend'))
+        .addWidget(btn('ðŸ” Actualizar permisos', 'accionActualizarPermisos'))
     )
     .build();
 }
@@ -35,13 +35,19 @@ function notificar(msg) {
 // ========================= BOTONES =========================
 
 function accionImportarSaldoInicial() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  PropertiesService.getScriptProperties().setProperty("SPREADSHEET_OBJETIVO", ss.getId());
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    PropertiesService.getScriptProperties().setProperty("SPREADSHEET_OBJETIVO", ss.getId());
+    Logger.log("[UI Importar Saldos] Click en boton. Spreadsheet actual: %s (%s)", ss.getName(), ss.getId());
 
-  eliminarTriggersProceso();
-  ScriptApp.newTrigger("procesoImportarSaldoInicial").timeBased().after(2000).create();
-
-  return notificar("⏳ Buscando saldo final del mes anterior...");
+    // Debug mode: ejecutar directo para que la ejecucion muestre logs/errores inmediatos.
+    procesoImportarSaldoInicial();
+    return notificar("✅ Saldos importados");
+  } catch (e) {
+    Logger.log("[UI Importar Saldos] Error: %s", e && e.message ? e.message : e);
+    Logger.log("[UI Importar Saldos] Stack: %s", e && e.stack ? e.stack : "sin stack");
+    return notificar("⚠️ " + (e && e.message ? e.message : e));
+  }
 }
 
 function accionActualizarDetalle() {
@@ -49,9 +55,9 @@ function accionActualizarDetalle() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const movimientos = calcularMovimientos(ss);
     crearHojaDetalle(ss, 'DETALLE_CLIENTES', movimientos);
-    return notificar('✅ Detalle del mes generado');
+    return notificar('âœ… Detalle del mes generado');
   } catch (e) {
-    return notificar('⚠️ ' + e.message);
+    return notificar('âš ï¸ ' + e.message);
   }
 }
 
@@ -59,15 +65,15 @@ function accionResumenSueldos() {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     generarResumenSueldos(ss);
-    return notificar('✅ Resumen de sueldos generado');
+    return notificar('âœ… Resumen de sueldos generado');
   } catch (e) {
-    return notificar('⚠️ ' + e.message);
+    return notificar('âš ï¸ ' + e.message);
   }
 }
 
 function accionReconstruirMovimientos() {
   try {
-    Logger.log("Reconstrucción iniciada");
+    Logger.log("ReconstrucciÃ³n iniciada");
     const result = reconstruirMovimientos() || {};
     const rebuiltMovements = Array.isArray(result.movements) ? result.movements : [];
     const existingMovements = readMovements();
@@ -83,19 +89,19 @@ function accionReconstruirMovimientos() {
     writeMovementItems(movementItems);
     writeMovementSalaries(movementSalaries);
     writeMovementClientPayments(movementClientPayments);
-    Logger.log("Reconstrucción finalizada");
-    return notificar('✅ Movimientos reconstruidos');
+    Logger.log("ReconstrucciÃ³n finalizada");
+    return notificar('âœ… Movimientos reconstruidos');
   } catch (e) {
-    return notificar('⚠️ ' + e.message);
+    return notificar('âš ï¸ ' + e.message);
   }
 }
 
 function accionSyncToBackend() {
   try {
     syncToBackend();
-    return notificar('☁️ Sync enviado a backend');
+    return notificar('â˜ï¸ Sync enviado a backend');
   } catch (e) {
-    return notificar('⚠️ ' + e.message);
+    return notificar('âš ï¸ ' + e.message);
   }
 }
 
@@ -121,11 +127,13 @@ function accionActualizarPermisos() {
       }
     });
 
-    let mensaje = `✅ ${agregados} permisos actualizados`;
-    if (errores.length > 0) mensaje += ` | ⚠️ errores con: ${errores.join(", ")}`;
+    let mensaje = `âœ… ${agregados} permisos actualizados`;
+    if (errores.length > 0) mensaje += ` | âš ï¸ errores con: ${errores.join(", ")}`;
 
     return notificar(mensaje);
   } catch (e) {
-    return notificar('⚠️ ' + e.message);
+    return notificar('âš ï¸ ' + e.message);
   }
 }
+
+
