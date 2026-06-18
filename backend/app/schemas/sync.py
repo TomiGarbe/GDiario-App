@@ -250,6 +250,9 @@ class MovementSyncPayload(BaseModel):
     type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
     amount: Decimal
     description: str | None = Field(default=None, max_length=500)
+    updated_at: datetime | None = None
+    source: Literal["sheet", "app", "app-entrega"] = "sheet"
+    deleted_at: datetime | None = None
 
     @field_validator("description")
     @classmethod
