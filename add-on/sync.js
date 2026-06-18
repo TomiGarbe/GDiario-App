@@ -73,7 +73,7 @@ function syncFromBackendToSheet() {
     id: movement && movement.id,
     type: movement && movement.type,
     date: movement && movement.date,
-    amount: movement && movement.amount,
+    amount: syncNumber_(movement && movement.amount),
     description: movement && movement.description,
     updated_at: movement && movement.updated_at,
     source: movement && movement.source
@@ -81,23 +81,23 @@ function syncFromBackendToSheet() {
 
   writeMovementItems(movementItems.map((item) => ({
     movement_id: item && item.movement_id,
-    client: item && item.client_name,
-    product: item && item.product_name,
-    quantity: item && item.quantity,
-    unit_price: item && item.unit_price,
-    subtotal: item && item.subtotal
+    client: syncSheetText_(item && item.client_name),
+    product: syncSheetText_(item && item.product_name),
+    quantity: syncNumber_(item && item.quantity),
+    unit_price: syncNumber_(item && item.unit_price),
+    subtotal: syncNumber_(item && item.subtotal)
   })));
 
   writeMovementSalaries(movementSalaries.map((salary) => ({
     movement_id: salary && salary.movement_id,
-    employee: salary && salary.employee_name,
-    subtotal: salary && salary.subtotal
+    employee: syncSheetText_(salary && salary.employee_name),
+    subtotal: syncNumber_(salary && salary.subtotal)
   })));
 
   writeMovementClientPayments(movementClientPayments.map((payment) => ({
     movement_id: payment && payment.movement_id,
-    client_name: payment && payment.client_name,
-    subtotal: payment && payment.subtotal
+    client_name: syncSheetText_(payment && payment.client_name),
+    subtotal: syncNumber_(payment && payment.subtotal)
   })));
 
   syncOperationalSheetsFromExport({
@@ -194,7 +194,7 @@ function syncProductSheetFromExport(sheetName, data) {
     const movementType = String(movement && movement.type || "").trim().toLowerCase();
     if (movementType !== "compra" && movementType !== "venta") return;
 
-    const clientName = String(item && item.client_name || "").trim();
+    const clientName = syncSheetText_(item && item.client_name);
     const productName = String(item && item.product_name || "").trim();
     const dateKey = syncDateKey_(movement && movement.date);
     const quantity = syncNumber_(item && item.quantity);
@@ -263,14 +263,14 @@ function syncCuentasFromExport(data) {
       if (!movement) return null;
       return [
         movement.date || "",
-        payment && payment.client_name || "",
+        syncSheetText_(payment && payment.client_name),
         "Pago de Fabian",
         "",
         "",
         "",
         "",
         "",
-        payment && payment.subtotal || "",
+        syncNumber_(payment && payment.subtotal),
         payment && payment.movement_id || ""
       ];
     })
@@ -306,10 +306,10 @@ function syncSueldosFromExport(data) {
       if (!movement) return null;
       return [
         movement.date || "",
-        salary && salary.employee_name || "",
+        syncSheetText_(salary && salary.employee_name),
         "Adelanto",
         movement.description || "Adelanto",
-        salary && salary.subtotal || "",
+        syncNumber_(salary && salary.subtotal),
         salary && salary.movement_id || ""
       ];
     })
@@ -347,7 +347,7 @@ function syncGastosFromExport(data) {
       const row = new Array(normalizedHeaders.length).fill("");
       row[0] = movement.date || "";
       row[1] = movement.description || "Gasto";
-      row[2] = movement.amount || "";
+      row[2] = syncNumber_(movement && movement.amount);
       row[3] = movement.id || "";
       row[isFromAppIndex] = true;
       return row;
@@ -366,6 +366,10 @@ function syncProductVariant_(productName) {
   if (normalized.indexOf("aserrin") !== -1) return "aserrin";
   if (normalized.indexOf("hueso") !== -1) return "huesos";
   return "grasa";
+}
+
+function syncSheetText_(value) {
+  return String(value == null ? "" : value).trim().toUpperCase();
 }
 
 function syncDateKey_(value) {
@@ -849,7 +853,7 @@ function isEmptyDataRow(row) {
 
 function formatDate(value) {
   if (value === null || value === undefined || value === "") return null;
-  const date = value instanceof Date ? value : new Date(value);
+  const date = parseDateAsLocal_(value);
   if (isNaN(date.getTime())) return null;
   return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
 }
@@ -894,9 +898,12 @@ function parseFecha(value) {
   const text = String(value).trim();
   if (!text) return null;
 
+  const isoLocal = parseIsoLocalDate_(text);
+  if (isoLocal) return isoLocal;
+
   const parts = text.split("/");
   if (parts.length !== 3) {
-    const fallback = new Date(text);
+    const fallback = parseDateAsLocal_(text);
     return isNaN(fallback.getTime()) ? null : fallback;
   }
 
@@ -910,6 +917,29 @@ function parseFecha(value) {
 
   // Evita overflow de fechas inválidas (ej: 32/01/2026).
   if (date.getFullYear() !== year || date.getMonth() !== month || date.getDate() !== day) return null;
+  return date;
+}
+
+function parseDateAsLocal_(value) {
+  if (value instanceof Date) return value;
+  const text = String(value == null ? "" : value).trim();
+  const isoLocal = parseIsoLocalDate_(text);
+  if (isoLocal) return isoLocal;
+  return new Date(text);
+}
+
+function parseIsoLocalDate_(text) {
+  const match = String(text || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const date = new Date(year, month, day);
+
+  if (date.getFullYear() !== year || date.getMonth() !== month || date.getDate() !== day) {
+    return null;
+  }
   return date;
 }
 
