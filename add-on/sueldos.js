@@ -15,10 +15,12 @@ function generarResumenSueldos(ss) {
   const datos = hojaSueldos.getDataRange().getValues().slice(1);
   if (datos.length === 0) return;
 
+  const normalizarTipoSueldo = (value) => String(value == null ? "" : value).trim().toLowerCase();
+
   const registros = datos.map(r => ({
     fecha:    new Date(r[0]),
     empleado: String(r[1]).toUpperCase(),
-    tipo:     String(r[2]).toLowerCase(),
+    tipo:     normalizarTipoSueldo(r[2]),
     concepto: r[3],
     monto:    parseNumber(r[4]) || 0
   }));
@@ -40,7 +42,7 @@ function generarResumenSueldos(ss) {
       .sort((a, b) => a.fecha - b.fecha);
 
     const pagos = lista
-      .filter(r => ["adelanto", "otros"].includes(r.tipo))
+      .filter(r => ["adelanto", "otro"].includes(r.tipo))
       .sort((a, b) => a.fecha - b.fecha);
 
     let totalBase    = 0;

@@ -308,7 +308,7 @@ function syncSueldosFromExport(data) {
         movement.date || "",
         syncSheetText_(salary && salary.employee_name),
         "Adelanto",
-        movement.description || "Adelanto",
+        "Adelanto",
         syncNumber_(salary && salary.subtotal),
         salary && salary.movement_id || ""
       ];
@@ -451,6 +451,7 @@ function buildMovements(rows) {
     const movementDate = formatDate(row.date);
     const movementAmount = parseNumber(row.amount);
     const movementDescription = cleanText(row.description) || "";
+    const movementSource = cleanText(row.source) || "sheet";
 
     if (!movementType || !movementDate || movementAmount === null) {
       throw new Error("MOVEMENTS fila invalida: id=" + externalId + ", row=" + (row._row_number || "?"));
@@ -463,6 +464,7 @@ function buildMovements(rows) {
         date: movementDate,
         amount: movementAmount,
         description: movementDescription,
+        source: movementSource,
         items: [],
         salaries: [],
         client_payments: [],
@@ -587,6 +589,7 @@ function buildMainPayload(movementsById) {
         date: movement.date,
         amount: movementAmount,
         description: movement.description,
+        source: movement.source || "sheet",
         items: (movement.items || []).map((item) => ({
           client_name: item.client_name,
           product_name: item.product_name,

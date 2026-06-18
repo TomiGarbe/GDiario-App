@@ -305,7 +305,7 @@ class SyncService:
                 "amount": SyncService._coerce_sync_full_movement_amount(movement),
                 "description": movement.description,
                 "updated_at": now_utc,
-                "source": "sheet",
+                "source": movement.source,
                 "deleted_at": None,
             }
             for movement in movement_list

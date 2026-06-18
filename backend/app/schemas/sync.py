@@ -355,7 +355,7 @@ class SyncFullMovementPayload(BaseModel):
     amount: Decimal
     description: str | None = Field(default=None, max_length=500)
     updated_at: datetime | None = None
-    source: Literal["sheet", "app"] = "sheet"
+    source: Literal["sheet", "app", "app-entrega"] = "sheet"
     deleted_at: datetime | None = None
     items: list[SyncFullMovementItemPayload] = Field(default_factory=list)
     salaries: list[SyncFullMovementSalaryPayload] = Field(default_factory=list)
@@ -393,7 +393,7 @@ class SyncMirrorMovementPayload(BaseModel):
     amount: Decimal
     description: str | None = Field(default=None, max_length=500)
     updated_at: datetime
-    source: Literal["sheet", "app"] = "sheet"
+    source: Literal["sheet", "app", "app-entrega"] = "sheet"
     deleted_at: datetime | None = None
     items: list[SyncFullMovementItemPayload] = Field(default_factory=list)
     salaries: list[SyncFullMovementSalaryPayload] = Field(default_factory=list)
