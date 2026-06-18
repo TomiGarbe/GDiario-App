@@ -56,6 +56,366 @@ function syncToBackend() {
   }
 }
 
+function syncFromBackendToSheet() {
+  const period = getPeriodPayload();
+  const periodId = Number(period.year) * 100 + Number(period.month);
+  Logger.log("SYNC FROM BACKEND iniciado. period_id=" + periodId);
+
+  const exported = getFromBackend("/sync/full?period_id=" + encodeURIComponent(periodId));
+  const movements = Array.isArray(exported && exported.movements) ? exported.movements : [];
+  const movementItems = Array.isArray(exported && exported.movement_items) ? exported.movement_items : [];
+  const movementSalaries = Array.isArray(exported && exported.movement_salaries) ? exported.movement_salaries : [];
+  const movementClientPayments = Array.isArray(exported && exported.movement_client_payments)
+    ? exported.movement_client_payments
+    : [];
+
+  reconcileMovements(movements.map((movement) => ({
+    id: movement && movement.id,
+    type: movement && movement.type,
+    date: movement && movement.date,
+    amount: movement && movement.amount,
+    description: movement && movement.description,
+    updated_at: movement && movement.updated_at,
+    source: movement && movement.source
+  })));
+
+  writeMovementItems(movementItems.map((item) => ({
+    movement_id: item && item.movement_id,
+    client: item && item.client_name,
+    product: item && item.product_name,
+    quantity: item && item.quantity,
+    unit_price: item && item.unit_price,
+    subtotal: item && item.subtotal
+  })));
+
+  writeMovementSalaries(movementSalaries.map((salary) => ({
+    movement_id: salary && salary.movement_id,
+    employee: salary && salary.employee_name,
+    subtotal: salary && salary.subtotal
+  })));
+
+  writeMovementClientPayments(movementClientPayments.map((payment) => ({
+    movement_id: payment && payment.movement_id,
+    client_name: payment && payment.client_name,
+    subtotal: payment && payment.subtotal
+  })));
+
+  syncOperationalSheetsFromExport({
+    period: period,
+    movements: movements,
+    movementItems: movementItems,
+    movementSalaries: movementSalaries,
+    movementClientPayments: movementClientPayments
+  });
+
+  Logger.log(
+    "SYNC FROM BACKEND finalizado. movements=%s items=%s salaries=%s client_payments=%s",
+    movements.length,
+    movementItems.length,
+    movementSalaries.length,
+    movementClientPayments.length
+  );
+
+  return {
+    movements: movements.length,
+    movement_items: movementItems.length,
+    movement_salaries: movementSalaries.length,
+    movement_client_payments: movementClientPayments.length
+  };
+}
+
+function syncOperationalSheetsFromExport(data) {
+  syncProductSheetFromExport("GRASA", data);
+  syncProductSheetFromExport("HUESOS", data);
+  syncCuentasFromExport(data);
+  syncSueldosFromExport(data);
+  syncGastosFromExport(data);
+}
+
+function syncProductSheetFromExport(sheetName, data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    throw new Error("No existe la hoja " + sheetName);
+  }
+
+  const values = sheet.getDataRange().getValues();
+  if (!values.length) {
+    throw new Error("La hoja " + sheetName + " no tiene encabezados");
+  }
+
+  const header = values[0] || [];
+  const firstDateColumn = 3;
+  const dateColumnCount = Math.max(0, header.length - 4);
+  const dateColumnIndexByKey = {};
+
+  for (let offset = 0; offset < dateColumnCount; offset += 1) {
+    const absoluteColumn = firstDateColumn + offset;
+    const key = syncDateKey_(header[absoluteColumn - 1]);
+    if (!key) continue;
+    dateColumnIndexByKey[key] = offset;
+  }
+
+  const rowMeta = [];
+  const rowMetaByKey = {};
+  let cordiezRows = 0;
+
+  for (let rowIndex = 1; rowIndex < values.length; rowIndex += 1) {
+    const client = String(values[rowIndex][0] == null ? "" : values[rowIndex][0]).trim();
+    if (!client || esFilaExcluidaPorHoja(client, sheetName)) continue;
+
+    const clientKey = syncUpperNoAccents_(client);
+    let rowKey = clientKey;
+    if (sheetName === "HUESOS" && clientKey === "CORDIEZ") {
+      rowKey = "CORDIEZ|" + (cordiezRows === 0 ? "aserrin" : "huesos");
+      cordiezRows += 1;
+    }
+
+    const meta = { rowNumber: rowIndex + 1, rowKey: rowKey };
+    rowMeta.push(meta);
+    rowMetaByKey[rowKey] = meta;
+  }
+
+  const movementById = {};
+  (data.movements || []).forEach((movement) => {
+    const id = String(movement && movement.id || "").trim();
+    if (id) movementById[id] = movement;
+  });
+
+  const quantitiesByRowKey = {};
+  const missingRows = {};
+  const missingDates = {};
+
+  (data.movementItems || []).forEach((item) => {
+    const movementId = String(item && item.movement_id || "").trim();
+    const movement = movementById[movementId];
+    if (!movement) return;
+
+    const movementType = String(movement && movement.type || "").trim().toLowerCase();
+    if (movementType !== "compra" && movementType !== "venta") return;
+
+    const clientName = String(item && item.client_name || "").trim();
+    const productName = String(item && item.product_name || "").trim();
+    const dateKey = syncDateKey_(movement && movement.date);
+    const quantity = syncNumber_(item && item.quantity);
+    const variant = syncProductVariant_(productName);
+    const targetSheet = variant === "grasa" ? "GRASA" : "HUESOS";
+    if (targetSheet !== sheetName || !clientName || !dateKey || quantity === null) return;
+
+    let rowKey = syncUpperNoAccents_(clientName);
+    if (sheetName === "HUESOS" && rowKey === "CORDIEZ") {
+      rowKey = "CORDIEZ|" + variant;
+    }
+
+    if (!rowMetaByKey[rowKey]) {
+      missingRows[rowKey] = true;
+      return;
+    }
+    if (dateColumnIndexByKey[dateKey] === undefined) {
+      missingDates[dateKey] = true;
+      return;
+    }
+
+    if (!quantitiesByRowKey[rowKey]) quantitiesByRowKey[rowKey] = {};
+    quantitiesByRowKey[rowKey][dateKey] = (quantitiesByRowKey[rowKey][dateKey] || 0) + quantity;
+  });
+
+  if (Object.keys(missingRows).length) {
+    throw new Error(
+      "Faltan filas en " + sheetName + " para: " + Object.keys(missingRows).slice(0, 5).join(", ")
+    );
+  }
+  if (Object.keys(missingDates).length) {
+    throw new Error(
+      "Faltan columnas de fecha en " + sheetName + " para: " + Object.keys(missingDates).slice(0, 5).join(", ")
+    );
+  }
+
+  rowMeta.forEach((meta) => {
+    const rowValues = new Array(dateColumnCount).fill("");
+    const quantities = quantitiesByRowKey[meta.rowKey] || {};
+    Object.keys(quantities).forEach((dateKey) => {
+      const offset = dateColumnIndexByKey[dateKey];
+      if (offset === undefined) return;
+      rowValues[offset] = quantities[dateKey];
+    });
+    sheet.getRange(meta.rowNumber, firstDateColumn, 1, dateColumnCount).setValues([rowValues]);
+  });
+}
+
+function syncCuentasFromExport(data) {
+  const sheet = _getOrCreateSheet("CUENTAS");
+  const values = sheet.getLastRow() > 0 ? sheet.getDataRange().getValues() : [];
+  const headers = values.length ? values[0] : ["Fecha", "Cliente", "Concepto", "", "", "", "", "Debe", "Haber", "movement_id"];
+  const keptRows = values.length > 1
+    ? values.slice(1).filter((row) => syncLowerTrim_(row[2]) !== "pago de fabian")
+    : [];
+
+  const movementById = {};
+  (data.movements || []).forEach((movement) => {
+    const id = String(movement && movement.id || "").trim();
+    if (id) movementById[id] = movement;
+  });
+
+  const appRows = (data.movementClientPayments || [])
+    .map((payment) => {
+      const movement = movementById[String(payment && payment.movement_id || "").trim()];
+      if (!movement) return null;
+      return [
+        movement.date || "",
+        payment && payment.client_name || "",
+        "Pago de Fabian",
+        "",
+        "",
+        "",
+        "",
+        "",
+        payment && payment.subtotal || "",
+        payment && payment.movement_id || ""
+      ];
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])));
+
+  const finalRows = [padRow_(headers, 10)].concat(keptRows.map((row) => padRow_(row, 10)), appRows.map((row) => padRow_(row, 10)));
+  sheet.clearContents();
+  sheet.getRange(1, 1, finalRows.length, 10).setValues(finalRows);
+}
+
+function syncSueldosFromExport(data) {
+  const sheet = _getOrCreateSheet("SUELDOS");
+  const values = sheet.getLastRow() > 0 ? sheet.getDataRange().getValues() : [];
+  const headers = values.length ? values[0] : ["Fecha", "Empleado", "Tipo", "Descripción", "Monto", "movement_id"];
+  const keptRows = values.length > 1
+    ? values.slice(1).filter((row) => {
+      const tipo = syncLowerTrim_(row[2]);
+      const concepto = syncLowerTrim_(row[3]);
+      return tipo !== "adelanto" && concepto.indexOf("adelanto") === -1;
+    })
+    : [];
+
+  const movementById = {};
+  (data.movements || []).forEach((movement) => {
+    const id = String(movement && movement.id || "").trim();
+    if (id) movementById[id] = movement;
+  });
+
+  const appRows = (data.movementSalaries || [])
+    .map((salary) => {
+      const movement = movementById[String(salary && salary.movement_id || "").trim()];
+      if (!movement) return null;
+      return [
+        movement.date || "",
+        salary && salary.employee_name || "",
+        "Adelanto",
+        movement.description || "Adelanto",
+        salary && salary.subtotal || "",
+        salary && salary.movement_id || ""
+      ];
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])));
+
+  const finalRows = [padRow_(headers, 6)].concat(keptRows.map((row) => padRow_(row, 6)), appRows.map((row) => padRow_(row, 6)));
+  sheet.clearContents();
+  sheet.getRange(1, 1, finalRows.length, 6).setValues(finalRows);
+}
+
+function syncGastosFromExport(data) {
+  const sheet = _getOrCreateSheet("GASTOS");
+  const values = sheet.getLastRow() > 0 ? sheet.getDataRange().getValues() : [];
+  const headers = values.length ? values[0] : ["Fecha", "Tipo", "Monto", "movement_id", "is_from_app"];
+
+  let isFromAppIndex = headers.findIndex((header) => syncLowerTrim_(header) === "is_from_app");
+  if (isFromAppIndex === -1) {
+    isFromAppIndex = 4;
+    headers[0] = headers[0] || "Fecha";
+    headers[1] = headers[1] || "Tipo";
+    headers[2] = headers[2] || "Monto";
+    headers[3] = headers[3] || "movement_id";
+    headers[4] = "is_from_app";
+  }
+
+  const normalizedHeaders = padRow_(headers, Math.max(headers.length, 5));
+  const keptRows = values.length > 1
+    ? values.slice(1).filter((row) => !syncIsTrue_(row[isFromAppIndex]))
+    : [];
+
+  const appRows = (data.movements || [])
+    .filter((movement) => String(movement && movement.type || "").trim().toLowerCase() === "gasto")
+    .map((movement) => {
+      const row = new Array(normalizedHeaders.length).fill("");
+      row[0] = movement.date || "";
+      row[1] = movement.description || "Gasto";
+      row[2] = movement.amount || "";
+      row[3] = movement.id || "";
+      row[isFromAppIndex] = true;
+      return row;
+    })
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])));
+
+  const finalRows = [normalizedHeaders]
+    .concat(keptRows.map((row) => padRow_(row, normalizedHeaders.length)))
+    .concat(appRows.map((row) => padRow_(row, normalizedHeaders.length)));
+  sheet.clearContents();
+  sheet.getRange(1, 1, finalRows.length, normalizedHeaders.length).setValues(finalRows);
+}
+
+function syncProductVariant_(productName) {
+  const normalized = syncLowerNoAccents_(productName);
+  if (normalized.indexOf("aserrin") !== -1) return "aserrin";
+  if (normalized.indexOf("hueso") !== -1) return "huesos";
+  return "grasa";
+}
+
+function syncDateKey_(value) {
+  if (value == null || value === "") return "";
+  if (typeof formatDate === "function") {
+    const formatted = formatDate(value);
+    if (formatted) return formatted;
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (!(date instanceof Date) || isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return year + "-" + month + "-" + day;
+}
+
+function syncNumber_(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function syncLowerTrim_(value) {
+  return String(value == null ? "" : value).trim().toLowerCase();
+}
+
+function syncLowerNoAccents_(value) {
+  return syncUpperNoAccents_(value).toLowerCase();
+}
+
+function syncUpperNoAccents_(value) {
+  return String(value == null ? "" : value)
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+}
+
+function syncIsTrue_(value) {
+  const text = syncLowerTrim_(value);
+  return text === "true" || text === "1" || text === "si" || text === "sí";
+}
+
+function padRow_(row, width) {
+  const out = Array.isArray(row) ? row.slice(0, width) : [];
+  while (out.length < width) out.push("");
+  return out;
+}
+
 function getSheetData(sheetName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(sheetName);
@@ -358,15 +718,27 @@ function sendClients(payloadClients) {
 }
 
 function sendToBackend(path, payload) {
-  const response = UrlFetchApp.fetch(API_URL + path, {
-    method: "post",
+  return requestBackend("post", path, payload);
+}
+
+function getFromBackend(path) {
+  return requestBackend("get", path);
+}
+
+function requestBackend(method, path, payload) {
+  const options = {
+    method: method,
     contentType: "application/json",
     headers: {
       "x-api-key": SYNC_API_KEY
     },
-    payload: JSON.stringify(payload),
     muteHttpExceptions: true
-  });
+  };
+  if (payload !== undefined) {
+    options.payload = JSON.stringify(payload);
+  }
+
+  const response = UrlFetchApp.fetch(API_URL + path, options);
 
   const code = response.getResponseCode();
   const body = response.getContentText();
@@ -378,7 +750,13 @@ function sendToBackend(path, payload) {
     throw new Error("Error en " + path + ": HTTP " + code + " - " + body);
   }
 
-  return body;
+  if (!body) return null;
+
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    return body;
+  }
 }
 
 function getPeriodPayload() {

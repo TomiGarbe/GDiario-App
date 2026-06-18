@@ -722,10 +722,8 @@ def _sum_active_quantity_from_db(
 
         if normalized_product == "grasa":
             product_filter = func.lower(func.trim(Product.name)) == "grasa"
-        elif normalized_product == "aserrin":
-            product_filter = func.lower(func.trim(Product.name)).contains("aserrin")
-        elif normalized_product == "huesos":
-            product_filter = func.lower(func.trim(Product.name)).contains("hueso")
+        elif normalized_product in {"aserrin", "huesos"}:
+            product_filter = _product_variant_matches(Product.name, normalized_product)
         else:
             product_filter = func.lower(func.trim(Product.name)) == str(product_name or "").strip().lower()
 
@@ -748,6 +746,15 @@ def _normalize_huesos_variant(product_name: str | None) -> str:
     if "hueso" in normalized:
         return "huesos"
     return normalized
+
+
+def _product_variant_matches(product_column, variant: str):
+    normalized_name = func.lower(func.trim(product_column))
+    return (
+        normalized_name.contains("aserrin")
+        if variant == "aserrin"
+        else normalized_name.contains("hueso") & ~normalized_name.contains("aserrin")
+    )
 
 
 def _sheet_name_for_product(product_name: str) -> str | None:

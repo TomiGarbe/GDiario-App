@@ -862,7 +862,7 @@ function _saveReconstructMaps() {
 
 // ========================= DISTRIBUIR =========================
 
-function _distribuirMovimientosLegacyNoUsar() {
+function distribuirMovimientosAOperativas() {
   const movements = readMovements();
   const items = _readMovementItemsSheet();
   const salaries = _readMovementSalariesSheet();
@@ -976,6 +976,10 @@ function _distribuirMovimientosLegacyNoUsar() {
   _writeSheetGastos(bucketGastos);
   _writeSheetSueldos(bucketSueldos);
   _writeSheetCuentas(bucketCuentas);
+}
+
+function _distribuirMovimientosLegacyNoUsar() {
+  distribuirMovimientosAOperativas();
 }
 
 function _writeSheetProducto(data, nombre) {

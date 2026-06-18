@@ -1,4 +1,4 @@
-﻿function onOpen(e) {}
+function onOpen(e) {}
 function onInstall(e) { onOpen(e); }
 
 function homepage() {
@@ -6,16 +6,16 @@ function homepage() {
     .setHeader(
       CardService.newCardHeader()
         .setTitle('Sistema Detalles Clientes')
-        .setSubtitle('ActualizaciÃ³n de movimientos')
+        .setSubtitle('Actualizacion de movimientos')
     )
     .addSection(
       CardService.newCardSection()
-        .addWidget(btn('ðŸ’° Importar saldo inicial', 'accionImportarSaldoInicial'))
-        .addWidget(btn('ðŸ”„ Actualizar detalle del mes', 'accionActualizarDetalle'))
-        .addWidget(btn('ðŸ‘· Generar resumen de sueldos', 'accionResumenSueldos'))
-        .addWidget(btn('ðŸ§± Reconstruir movimientos', 'accionReconstruirMovimientos'))
-        .addWidget(btn('â˜ï¸ Sync a DB', 'accionSyncToBackend'))
-        .addWidget(btn('ðŸ” Actualizar permisos', 'accionActualizarPermisos'))
+        .addWidget(btn('💰 Importar saldo inicial', 'accionImportarSaldoInicial'))
+        .addWidget(btn('📋 Actualizar detalle del mes', 'accionActualizarDetalle'))
+        .addWidget(btn('💵 Generar resumen de sueldos', 'accionResumenSueldos'))
+        .addWidget(btn('🔄 Reconstruir movimientos', 'accionReconstruirMovimientos'))
+        .addWidget(btn('💾 Sync desde sheets a app', 'accionSyncToBackend'))
+        .addWidget(btn('💾 Sync desde app a sheets', 'accionSyncFromBackend'))
     )
     .build();
 }
@@ -55,9 +55,9 @@ function accionActualizarDetalle() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const movimientos = calcularMovimientos(ss);
     crearHojaDetalle(ss, 'DETALLE_CLIENTES', movimientos);
-    return notificar('âœ… Detalle del mes generado');
+    return notificar('Detalle del mes generado');
   } catch (e) {
-    return notificar('âš ï¸ ' + e.message);
+    return notificar(e.message);
   }
 }
 
@@ -65,15 +65,15 @@ function accionResumenSueldos() {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     generarResumenSueldos(ss);
-    return notificar('âœ… Resumen de sueldos generado');
+    return notificar('Resumen de sueldos generado');
   } catch (e) {
-    return notificar('âš ï¸ ' + e.message);
+    return notificar(e.message);
   }
 }
 
 function accionReconstruirMovimientos() {
   try {
-    Logger.log("ReconstrucciÃ³n iniciada");
+    Logger.log("Reconstrucción iniciada");
     const result = reconstruirMovimientos() || {};
     const rebuiltMovements = Array.isArray(result.movements) ? result.movements : [];
     const existingMovements = readMovements();
@@ -89,51 +89,31 @@ function accionReconstruirMovimientos() {
     writeMovementItems(movementItems);
     writeMovementSalaries(movementSalaries);
     writeMovementClientPayments(movementClientPayments);
-    Logger.log("ReconstrucciÃ³n finalizada");
-    return notificar('âœ… Movimientos reconstruidos');
+    Logger.log("Reconstrucción finalizada");
+    return notificar('Movimientos reconstruidos');
   } catch (e) {
-    return notificar('âš ï¸ ' + e.message);
+    return notificar(e.message);
   }
 }
 
 function accionSyncToBackend() {
   try {
     syncToBackend();
-    return notificar('â˜ï¸ Sync enviado a backend');
+    return notificar('Sync enviado a backend');
   } catch (e) {
-    return notificar('âš ï¸ ' + e.message);
+    return notificar(e.message);
   }
 }
 
-function accionActualizarPermisos() {
+function accionSyncFromBackend() {
   try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const emails = [
-      "tomigarbe2003@gmail.com",
-      "cristiangarbe@gmail.com",
-      "angel2018dios@gmail.com"
-    ];
-
-    let agregados = 0;
-    const errores = [];
-
-    emails.forEach(email => {
-      try {
-        ss.addEditor(email);
-        agregados++;
-      } catch (e) {
-        errores.push(email);
-        Logger.log("Error con " + email + ": " + e.message);
-      }
-    });
-
-    let mensaje = `âœ… ${agregados} permisos actualizados`;
-    if (errores.length > 0) mensaje += ` | âš ï¸ errores con: ${errores.join(", ")}`;
-
-    return notificar(mensaje);
+    const result = syncFromBackendToSheet();
+    return notificar(
+      'Sync desde app listo: ' +
+      result.movements + ' movs, ' +
+      result.movement_items + ' items'
+    );
   } catch (e) {
-    return notificar('âš ï¸ ' + e.message);
+    return notificar(e.message);
   }
 }
-
-
