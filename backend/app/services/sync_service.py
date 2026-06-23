@@ -46,6 +46,22 @@ class SyncService:
         return len(normalized_names), created, len(unique_names) - created
 
     @staticmethod
+    def ensure_products(db: Session, names: Iterable[str]) -> tuple[int, int, int]:
+        normalized_names = [normalize_entity_name(name) for name in names if str(name or "").strip()]
+        if not normalized_names:
+            return 0, 0, 0
+
+        unique_names = list(dict.fromkeys(normalized_names))
+        existing = set(db.execute(select(Product.name).where(Product.name.in_(unique_names))).scalars().all())
+        missing = [name for name in unique_names if name not in existing]
+        created = 0
+        if missing:
+            stmt = pg_insert(Product).values([{"name": name} for name in missing])
+            result = db.execute(stmt.on_conflict_do_nothing(index_elements=[func.lower(Product.name)]))
+            created = int(result.rowcount or 0)
+        return len(normalized_names), created, len(unique_names) - created
+
+    @staticmethod
     def upsert_prices(db: Session, prices: Iterable) -> tuple[int, int]:
         price_list = list(prices)
         if not price_list:
@@ -60,6 +76,9 @@ class SyncService:
 
         client_names = sorted({k[0] for k in deduped})
         product_names = sorted({k[1] for k in deduped})
+        SyncService.ensure_clients(db, client_names)
+        SyncService.ensure_products(db, product_names)
+
         client_map = SyncService._load_entity_map(db, Client)
         product_map = SyncService._load_entity_map(db, Product)
         missing_clients = sorted(name for name in client_names if name not in client_map)

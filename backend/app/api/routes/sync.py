@@ -9,6 +9,8 @@ from app.core.sync_auth import verify_sync_key
 from app.schemas.sync import (
     SyncClientsRequest,
     SyncClientsResponse,
+    SyncProductsRequest,
+    SyncProductsResponse,
     SyncPricesRequest,
     SyncPricesResponse,
     SyncFullRequest,
@@ -42,6 +44,19 @@ def sync_clients(data: SyncClientsRequest, db: Session = Depends(get_db)) -> Syn
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except IntegrityError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Integrity error syncing clients") from exc
+
+
+@router.post("/products", response_model=SyncProductsResponse, status_code=status.HTTP_200_OK)
+def sync_products(data: SyncProductsRequest, db: Session = Depends(get_db)) -> SyncProductsResponse:
+    try:
+        names = [item.name for item in data.products]
+        with db.begin():
+            received, created, _ = SyncService.ensure_products(db=db, names=names)
+        return SyncProductsResponse(received=received, created=created)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Integrity error syncing products") from exc
 
 
 @router.post("/prices", response_model=SyncPricesResponse, status_code=status.HTTP_200_OK)

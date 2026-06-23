@@ -192,6 +192,37 @@ class SyncClientPayload(BaseModel):
         return clean
 
 
+class SyncProductsRequest(BaseModel):
+    products: list["SyncProductPayload"] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_legacy_shape(cls, data):
+        if not isinstance(data, dict):
+            return data
+        raw = dict(data)
+        if "products" not in raw and "names" in raw:
+            raw["products"] = [{"name": str(name)} for name in (raw.get("names") or [])]
+        return raw
+
+
+class SyncProductsResponse(BaseModel):
+    received: int
+    created: int
+
+
+class SyncProductPayload(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("name cannot be empty")
+        return clean
+
+
 class SyncPricesRequest(BaseModel):
     prices: list[SyncPricePayload] = Field(default_factory=list)
 

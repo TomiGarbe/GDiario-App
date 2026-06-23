@@ -15,14 +15,17 @@ const MOVEMENT_TYPE_TO_BACKEND = {
 };
 
 function syncToBackend() {
+  return syncMovementsToBackend();
+}
+
+function syncMovementsToBackend() {
   try {
-    Logger.log("SYNC iniciado");
+    Logger.log("SYNC movimientos iniciado");
 
     const movementsRows = getSheetData("MOVEMENTS");
     const itemsRows = getSheetData("ITEMS");
     const salariesRows = getSheetData("SALARIES");
     const clientPaymentsRows = getSheetData("CLIENT_PAYMENTS");
-    const pricesRows = getSheetData("PRECIOS");
 
     const movementsById = buildMovements(movementsRows);
     attachItems(movementsById, itemsRows);
@@ -30,28 +33,57 @@ function syncToBackend() {
     attachClientPayments(movementsById, clientPaymentsRows);
 
     const payloadFull = buildMainPayload(movementsById);
-    const payloadPrices = buildPrices(pricesRows);
-    const payloadClients = buildClients(pricesRows, itemsRows, clientPaymentsRows);
 
     validateMainPayload(payloadFull);
-    validatePricesPayload(payloadPrices);
-    validateClientsPayload(payloadClients);
-
-    const clientsResponse = sendClients(payloadClients);
-    Logger.log("Sync clients OK");
-
-    const pricesResponse = sendToBackend("/sync/prices", payloadPrices);
-    Logger.log("Sync prices OK");
 
     const fullResponse = sendToBackend("/sync/full", payloadFull);
     Logger.log("Sync movements OK");
 
-    Logger.log("SYNC finalizado");
-    Logger.log("/sync/clients response: " + clientsResponse);
+    Logger.log("SYNC movimientos finalizado");
     Logger.log("/sync/full response: " + fullResponse);
-    Logger.log("/sync/prices response: " + pricesResponse);
+    return fullResponse;
   } catch (error) {
-    Logger.log("SYNC error: " + error.message);
+    Logger.log("SYNC movimientos error: " + error.message);
+    throw error;
+  }
+}
+
+function syncCatalogToBackend() {
+  try {
+    Logger.log("SYNC catalogo iniciado");
+
+    const pricesRows = getSheetData("PRECIOS");
+    const itemsRows = getOptionalSheetData("ITEMS");
+    const clientPaymentsRows = getOptionalSheetData("CLIENT_PAYMENTS");
+
+    const payloadPrices = buildPrices(pricesRows);
+    const payloadClients = buildClients(pricesRows, itemsRows, clientPaymentsRows);
+    const payloadProducts = buildProducts(pricesRows, itemsRows);
+
+    validateClientsPayload(payloadClients);
+    validateProductsPayload(payloadProducts);
+    validatePricesPayload(payloadPrices);
+
+    const clientsResponse = sendClients(payloadClients);
+    Logger.log("Sync clients OK");
+
+    const productsResponse = sendProducts(payloadProducts);
+    Logger.log("Sync products OK");
+
+    const pricesResponse = sendToBackend("/sync/prices", payloadPrices);
+    Logger.log("Sync prices OK");
+
+    Logger.log("SYNC catalogo finalizado");
+    Logger.log("/sync/clients response: " + clientsResponse);
+    Logger.log("/sync/products response: " + productsResponse);
+    Logger.log("/sync/prices response: " + pricesResponse);
+    return {
+      clients: clientsResponse,
+      products: productsResponse,
+      prices: pricesResponse
+    };
+  } catch (error) {
+    Logger.log("SYNC catalogo error: " + error.message);
     throw error;
   }
 }
@@ -440,6 +472,13 @@ function getSheetData(sheetName) {
     .filter((row) => !isEmptyDataRow(row));
 }
 
+function getOptionalSheetData(sheetName) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return [];
+  return getSheetData(sheetName);
+}
+
 function buildMovements(rows) {
   const movementsById = {};
 
@@ -700,6 +739,13 @@ function buildClients(pricesRows, itemsRows, clientPaymentsRows) {
   };
 }
 
+function buildProducts(pricesRows, itemsRows) {
+  const names = extractUniqueProducts(pricesRows, itemsRows);
+  return {
+    products: names.map((name) => ({ name: name }))
+  };
+}
+
 function extractUniqueClients(pricesRows, itemsRows, clientPaymentsRows) {
   const byNormalized = {};
   const out = [];
@@ -720,8 +766,31 @@ function extractUniqueClients(pricesRows, itemsRows, clientPaymentsRows) {
   return out;
 }
 
+function extractUniqueProducts(pricesRows, itemsRows) {
+  const byNormalized = {};
+  const out = [];
+
+  const addName = function (rawValue) {
+    const normalized = normalizeName(rawValue);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (byNormalized[key]) return;
+    byNormalized[key] = true;
+    out.push(normalized);
+  };
+
+  (pricesRows || []).forEach((row) => addName(row.product || row.producto || row.product_name));
+  (itemsRows || []).forEach((row) => addName(row.product || row.producto || row.product_name));
+
+  return out;
+}
+
 function sendClients(payloadClients) {
   return sendToBackend("/sync/clients", payloadClients);
+}
+
+function sendProducts(payloadProducts) {
+  return sendToBackend("/sync/products", payloadProducts);
 }
 
 function sendToBackend(path, payload) {
@@ -830,6 +899,16 @@ function validateClientsPayload(payload) {
 
   payload.clients.forEach((row, idx) => {
     if (!cleanText(row && row.name)) throw new Error("clients[" + idx + "].name faltante");
+  });
+}
+
+function validateProductsPayload(payload) {
+  if (!payload || !Array.isArray(payload.products)) {
+    throw new Error("Payload de productos invalido");
+  }
+
+  payload.products.forEach((row, idx) => {
+    if (!cleanText(row && row.name)) throw new Error("products[" + idx + "].name faltante");
   });
 }
 

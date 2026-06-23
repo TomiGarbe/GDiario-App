@@ -10,12 +10,13 @@ function homepage() {
     )
     .addSection(
       CardService.newCardSection()
-        .addWidget(btn("💰 Importar saldo inicial", "accionImportarSaldoInicial"))
-        .addWidget(btn("📋 Actualizar detalle del mes", "accionActualizarDetalle"))
-        .addWidget(btn("💵 Generar resumen de sueldos", "accionResumenSueldos"))
-        .addWidget(btn("🔄 Reconstruir movimientos", "accionReconstruirMovimientos"))
-        .addWidget(btn("⬆️ Sync desde sheets a app", "accionSyncToBackend"))
-        .addWidget(btn("⬇️ Sync desde app a sheets", "accionSyncFromBackend"))
+        .addWidget(btn("Importar saldo inicial", "accionImportarSaldoInicial"))
+        .addWidget(btn("Actualizar detalle del mes", "accionActualizarDetalle"))
+        .addWidget(btn("Generar resumen de sueldos", "accionResumenSueldos"))
+        .addWidget(btn("Reconstruir movimientos", "accionReconstruirMovimientos"))
+        .addWidget(btn("Sync movimientos a app", "accionSyncMovimientosToBackend"))
+        .addWidget(btn("Sync precios/clientes a app", "accionSyncCatalogoToBackend"))
+        .addWidget(btn("Sync desde app a sheets", "accionSyncFromBackend"))
     )
     .build();
 }
@@ -99,9 +100,22 @@ function accionReconstruirMovimientos() {
 }
 
 function accionSyncToBackend() {
+  return accionSyncMovimientosToBackend();
+}
+
+function accionSyncMovimientosToBackend() {
   try {
-    syncToBackend();
-    return notificar("Sync enviado a backend");
+    syncMovementsToBackend();
+    return notificar("Movimientos enviados a la app");
+  } catch (e) {
+    return notificar(e && e.message ? e.message : String(e));
+  }
+}
+
+function accionSyncCatalogoToBackend() {
+  try {
+    syncCatalogToBackend();
+    return notificar("Precios, clientes y productos enviados a la app");
   } catch (e) {
     return notificar(e && e.message ? e.message : String(e));
   }

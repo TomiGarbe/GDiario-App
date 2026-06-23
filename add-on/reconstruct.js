@@ -421,12 +421,16 @@ function _stabilizeRebuiltMovementIds(movements, items, salaries, clientPayments
   const existingItems = _readMovementItemsSheet();
   const existingClientPayments = _readMovementClientPaymentsSheet();
   const existingByKey = _indexExistingMovementsByKey(existingMovements, existingItems, existingClientPayments);
+  const existingItemsByMovement = _groupMovementItemsByMovement(existingItems);
+  const existingItemSignaturesByMovement = _groupItemsByMovement(existingItems);
 
   const newItemsByMovement = _groupItemsByMovement(items);
   const newClientByMovement = _groupClientByMovement(items, clientPayments);
   const idRemap = {};
   const usedIds = {};
   const outMovements = [];
+  const preservedPurchaseItemsByPrevId = {};
+  const emittedPreservedPurchaseItems = {};
 
   (movements || []).forEach((movement) => {
     const prevId = _asCleanString(movement && movement.id);
@@ -453,19 +457,46 @@ function _stabilizeRebuiltMovementIds(movements, items, salaries, clientPayments
 
     const finalId = reusedId || (_isUuidV4(prevId) ? prevId : Utilities.getUuid());
     idRemap[prevId] = finalId;
+    let amount = movement && movement.amount;
+
+    if (
+      _isCompraMovement(movement) &&
+      reusedId &&
+      existingItemSignaturesByMovement[reusedId] === newItemsByMovement[prevId]
+    ) {
+      const preservedItems = _clonePreservedPurchaseItems(existingItemsByMovement[reusedId], finalId);
+      if (preservedItems.length) {
+        preservedPurchaseItemsByPrevId[prevId] = preservedItems;
+        amount = _sumItemSubtotals(preservedItems);
+      }
+    }
+
     outMovements.push({
       id: finalId,
       type: movement && movement.type,
       date: movement && movement.date,
-      amount: movement && movement.amount,
+      amount,
       description: movement && movement.description
     });
   });
 
-  const outItems = (items || []).map((it) => ({
-    ...it,
-    movement_id: idRemap[_asCleanString(it && it.movement_id)] || _asCleanString(it && it.movement_id)
-  }));
+  const outItems = [];
+  (items || []).forEach((it) => {
+    const prevId = _asCleanString(it && it.movement_id);
+    const preservedItems = preservedPurchaseItemsByPrevId[prevId];
+    if (preservedItems) {
+      if (emittedPreservedPurchaseItems[prevId]) return;
+      preservedItems.forEach((preservedItem) => outItems.push(preservedItem));
+      emittedPreservedPurchaseItems[prevId] = true;
+      return;
+    }
+
+    outItems.push({
+      ...it,
+      movement_id: idRemap[prevId] || prevId
+    });
+  });
+
   const outSalaries = (salaries || []).map((s) => ({
     ...s,
     movement_id: idRemap[_asCleanString(s && s.movement_id)] || _asCleanString(s && s.movement_id)
@@ -544,6 +575,54 @@ function _groupClientByMovement(items, clientPayments) {
     if (client) clientByMovement[movementId] = client;
   });
   return clientByMovement;
+}
+
+function _groupMovementItemsByMovement(items) {
+  const grouped = {};
+  (items || []).forEach((it) => {
+    const movementId = _asCleanString(it && it.movement_id);
+    if (!movementId) return;
+    if (!grouped[movementId]) grouped[movementId] = [];
+    grouped[movementId].push(it);
+  });
+  return grouped;
+}
+
+function _clonePreservedPurchaseItems(items, movementId) {
+  const out = [];
+  (items || []).forEach((it) => {
+    const client = _asCleanString(it && it.client);
+    const product = _asCleanString(it && it.product);
+    const quantity = _toNumber(it && it.quantity);
+    const unitPrice = _toNumber(it && it.unit_price);
+    const subtotal = _toNumber(it && it.subtotal);
+
+    if (!client || !product) return;
+    if (!_isValidNumber(quantity) || !_isValidNumber(unitPrice) || !_isValidNumber(subtotal)) return;
+
+    out.push({
+      movement_id: movementId,
+      client,
+      product,
+      quantity,
+      unit_price: unitPrice,
+      subtotal
+    });
+  });
+  return out;
+}
+
+function _sumItemSubtotals(items) {
+  return (items || []).reduce((acc, item) => {
+    const subtotal = _toNumber(item && item.subtotal);
+    return acc + (_isValidNumber(subtotal) ? subtotal : 0);
+  }, 0);
+}
+
+function _isCompraMovement(movement) {
+  const type = normalize(movement && movement.type);
+  const backendType = MOVEMENT_TYPE_TO_BACKEND[type] || type;
+  return backendType === "compra";
 }
 
 // ========================= MERGE FINAL =========================
