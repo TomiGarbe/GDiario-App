@@ -53,12 +53,10 @@ function syncCatalogToBackend() {
     Logger.log("SYNC catalogo iniciado");
 
     const pricesRows = getSheetData("PRECIOS");
-    const itemsRows = getOptionalSheetData("ITEMS");
-    const clientPaymentsRows = getOptionalSheetData("CLIENT_PAYMENTS");
 
     const payloadPrices = buildPrices(pricesRows);
-    const payloadClients = buildClients(pricesRows, itemsRows, clientPaymentsRows);
-    const payloadProducts = buildProducts(pricesRows, itemsRows);
+    const payloadClients = buildClients(pricesRows);
+    const payloadProducts = buildProducts(pricesRows);
 
     validateClientsPayload(payloadClients);
     validateProductsPayload(payloadProducts);
@@ -732,21 +730,21 @@ function buildPrices(rows) {
   return { prices: prices };
 }
 
-function buildClients(pricesRows, itemsRows, clientPaymentsRows) {
-  const names = extractUniqueClients(pricesRows, itemsRows, clientPaymentsRows);
+function buildClients(pricesRows) {
+  const names = extractUniqueClients(pricesRows);
   return {
     clients: names.map((name) => ({ name: name }))
   };
 }
 
-function buildProducts(pricesRows, itemsRows) {
-  const names = extractUniqueProducts(pricesRows, itemsRows);
+function buildProducts(pricesRows) {
+  const names = extractUniqueProducts(pricesRows);
   return {
     products: names.map((name) => ({ name: name }))
   };
 }
 
-function extractUniqueClients(pricesRows, itemsRows, clientPaymentsRows) {
+function extractUniqueClients(pricesRows) {
   const byNormalized = {};
   const out = [];
 
@@ -759,14 +757,20 @@ function extractUniqueClients(pricesRows, itemsRows, clientPaymentsRows) {
     out.push(normalized);
   };
 
-  (pricesRows || []).forEach((row) => addName(row.client || row.cliente || row.client_name));
-  (itemsRows || []).forEach((row) => addName(row.client || row.cliente || row.client_name));
-  (clientPaymentsRows || []).forEach((row) => addName(row.client_name || row.client || row.cliente));
+  (pricesRows || []).forEach((row) => {
+    addName(
+      firstDefinedValue(
+        getField(row, "cliente"),
+        getField(row, "client"),
+        getField(row, "client_name")
+      )
+    );
+  });
 
   return out;
 }
 
-function extractUniqueProducts(pricesRows, itemsRows) {
+function extractUniqueProducts(pricesRows) {
   const byNormalized = {};
   const out = [];
 
@@ -779,8 +783,15 @@ function extractUniqueProducts(pricesRows, itemsRows) {
     out.push(normalized);
   };
 
-  (pricesRows || []).forEach((row) => addName(row.product || row.producto || row.product_name));
-  (itemsRows || []).forEach((row) => addName(row.product || row.producto || row.product_name));
+  (pricesRows || []).forEach((row) => {
+    addName(
+      firstDefinedValue(
+        getField(row, "producto"),
+        getField(row, "product"),
+        getField(row, "product_name")
+      )
+    );
+  });
 
   return out;
 }
