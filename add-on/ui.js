@@ -18,6 +18,10 @@ function homepage() {
         .addWidget(btn("⬆️ Sync desde sheets a app", "accionSyncMovimientosToBackend"))
         .addWidget(btn("⬇️ Sync desde app a sheets", "accionSyncFromBackend"))
     )
+    .addSection(
+      CardService.newCardSection()
+        .addWidget(btn("Traer precios mes anterior", "accionImportarPreciosMesAnterior"))
+    )
     .build();
 }
 
@@ -124,6 +128,22 @@ function accionSyncCatalogoToBackend() {
   try {
     syncCatalogToBackend();
     return notificar("Precios, clientes y productos enviados a la app");
+  } catch (e) {
+    return notificar(e && e.message ? e.message : String(e));
+  }
+}
+
+function accionImportarPreciosMesAnterior() {
+  try {
+    const result = importarPreciosDesdeMesAnterior();
+    return notificar(
+      "Precios importados: " +
+      result.count +
+      " desde " +
+      result.source +
+      " con fecha " +
+      result.targetDate
+    );
   } catch (e) {
     return notificar(e && e.message ? e.message : String(e));
   }

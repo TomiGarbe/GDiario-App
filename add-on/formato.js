@@ -70,7 +70,7 @@ function aplicarFormatoTablaSueldos(hoja) {
   hoja.getRange(1, 1, ultimaFila, 4).setBorder(true, true, true, true, true, true);
 
   // Resaltar filas de totales
-  const FILAS_RESALTADAS = ["SALDO INICIAL", "TOTAL SUELDO", "TOTAL PAGADO", "SALDO FINAL"];
+  const FILAS_RESALTADAS = ["SALDO INICIAL", "TOTAL SUELDO", "TOTAL ADELANTOS", "SALDO FINAL"];
   const datos = hoja.getRange(2, 1, ultimaFila - 1, 4).getValues();
   datos.forEach((fila, i) => {
     if (FILAS_RESALTADAS.includes(fila[2])) {

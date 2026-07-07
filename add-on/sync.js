@@ -998,7 +998,7 @@ function validateProductsPayload(payload) {
 }
 
 function normalizeHeaders(headers) {
-  return (headers || []).map((header) => cleanText(header || "").toLowerCase());
+  return (headers || []).map((header) => String(cleanText(header) || "").toLowerCase());
 }
 
 function rowToObject(headers, row, rowNumber) {

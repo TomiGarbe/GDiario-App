@@ -239,9 +239,8 @@ function procesarSueldos(ss) {
     const amount = parseNumber(row[4]);
     const parsedDate = _parseOperationalDate(date, `procesarSueldos:row=${i + 1}`);
     const esAdelanto = tipoNorm === "adelanto" || conceptoNorm.indexOf("adelanto") !== -1;
-    const esSaldoInicial = tipoNorm === "saldo inicial" || tipoNorm === "saldo_inicial" || conceptoNorm === "saldo inicial";
 
-    if (!esAdelanto && !esSaldoInicial) {
+    if (!esAdelanto) {
       continue;
     }
     if (!employee) continue;
@@ -255,10 +254,10 @@ function procesarSueldos(ss) {
 
     movements.push({
       id,
-      type: esSaldoInicial ? "Saldo Inicial" : "Sueldo",
+      type: "Sueldo",
       date: parsedDate,
       amount,
-      description: concepto || (esSaldoInicial ? "Saldo Inicial" : "Sueldo")
+      description: concepto || "Sueldo"
     });
 
     salaries.push({

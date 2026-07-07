@@ -45,15 +45,16 @@ function generarResumenSueldos(ss) {
       .filter(r => ["sueldo base", "premio", "falta"].includes(r.tipo))
       .sort((a, b) => a.fecha - b.fecha);
 
-    const pagos = lista
+    const adelantos = lista
       .filter(r => ["adelanto", "otro"].includes(r.tipo))
       .sort((a, b) => a.fecha - b.fecha);
 
     let totalBase    = 0;
     let totalPremios = 0;
     let totalFaltas  = 0;
-    let totalPagado  = 0;
     let saldoInicial = 0;
+    let totalAdelantos = 0;
+    let efectoAdelantosEnSaldo = 0;
 
     saldosIniciales.forEach(r => {
       saldoInicial += r.monto;
@@ -83,15 +84,15 @@ function generarResumenSueldos(ss) {
     const sueldoTotal = totalBase + totalPremios - totalFaltas;
     resultado.push(["", emp, "TOTAL SUELDO", sueldoTotal]);
 
-    // Adelantos y otros pagos: el saldo respeta el signo cargado.
-    pagos.forEach(r => {
-      const monto = r.monto < 0 ? r.monto : -Math.abs(r.monto);
-      totalPagado += r.monto;
-      resultado.push([r.fecha, emp, r.concepto, monto]);
+    // Adelantos: positivo descuenta saldo; negativo suma saldo.
+    adelantos.forEach(r => {
+      totalAdelantos += r.monto;
+      efectoAdelantosEnSaldo += -r.monto;
+      resultado.push([r.fecha, emp, r.concepto || "Adelanto", -r.monto]);
     });
 
-    resultado.push(["", emp, "TOTAL PAGADO", totalPagado]);
-    resultado.push(["", emp, "SALDO FINAL",  saldoInicial + sueldoTotal - totalPagado]);
+    resultado.push(["", emp, "TOTAL ADELANTOS", totalAdelantos]);
+    resultado.push(["", emp, "SALDO FINAL",  saldoInicial + sueldoTotal + efectoAdelantosEnSaldo]);
   });
 
   hojaResumen.getRange(2, 1, resultado.length, 4).setValues(resultado);
