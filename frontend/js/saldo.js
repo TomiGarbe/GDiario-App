@@ -141,7 +141,7 @@ function normalizarMovimiento(item) {
   var producto = String(mov.producto || '').trim();
   var kg = toNumber(mov.kg);
   var monto = pickNumber(mov, ['monto', 'subtotal', 'total', 'importe', 'valor']);
-  var fecha = fechaIsoMov(mov.fecha || mov.Fecha || mov.dia);
+  var fecha = fechaIsoMov(mov.fecha || mov.Fecha || mov.date || mov.Date || mov.dia);
   var clase = String(mov.clase || '').trim().toLowerCase();
   var datos = mov.datos;
   var items = Array.isArray(mov.items) ? mov.items : [];
@@ -800,6 +800,9 @@ function abrirModal(config) {
 
   setTimeout(function() {
     overlay.classList.add('open');
+    if (typeof DP !== 'undefined' && typeof DP.initIn === 'function') {
+      DP.initIn(overlay);
+    }
   }, 0);
 
   return {
@@ -1359,6 +1362,7 @@ function abrirModalConSeccionClonada(config) {
   if (!sourceWrap) throw new Error('No se encontro formulario para editar');
 
   var clone = sourceWrap.cloneNode(true);
+  prepararDatepickersClonadosParaModal(clone);
   var ctxOriginal = desacoplarNodoParaEditor(sourceWrap);
   var modal = null;
 
@@ -1388,6 +1392,9 @@ function abrirModalConSeccionClonada(config) {
 
       try {
         config.onBuild(clone, modal.body);
+        if (typeof DP !== 'undefined' && typeof DP.initIn === 'function') {
+          DP.initIn(clone);
+        }
       } catch (err) {
         showToast(err && err.message ? err.message : 'No se pudo abrir el editor', 'error');
         cerrarModalActual();
@@ -1396,6 +1403,23 @@ function abrirModalConSeccionClonada(config) {
   }
 
   return modal;
+}
+
+function prepararDatepickersClonadosParaModal(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+
+  root.querySelectorAll('.dp-wrap').forEach(function(node) {
+    if (node && node.parentNode) node.parentNode.removeChild(node);
+  });
+
+  root.querySelectorAll('input[type="date"]').forEach(function(input) {
+    delete input.dataset.dpInit;
+    input.style.display = '';
+    input.style.position = '';
+    input.style.pointerEvents = '';
+    input.removeAttribute('aria-hidden');
+    input.tabIndex = 0;
+  });
 }
 
 function obtenerProductosCompraDesdeMovimiento(mov) {
