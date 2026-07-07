@@ -233,15 +233,19 @@ function procesarSueldos(ss) {
     const date = row[0];
     const employee = normalizeName(row[1]);
     const tipo = _asCleanString(row[2]);
+    const tipoNorm = normalize(tipo);
     const concepto = row[3];
+    const conceptoNorm = normalize(concepto);
     const amount = parseNumber(row[4]);
     const parsedDate = _parseOperationalDate(date, `procesarSueldos:row=${i + 1}`);
+    const esAdelanto = tipoNorm === "adelanto" || conceptoNorm.indexOf("adelanto") !== -1;
+    const esSaldoInicial = tipoNorm === "saldo inicial" || tipoNorm === "saldo_inicial" || conceptoNorm === "saldo inicial";
 
-    if (!concepto || !concepto.toString().toLowerCase().includes("adelanto")) {
+    if (!esAdelanto && !esSaldoInicial) {
       continue;
     }
     if (!employee) continue;
-    if (!isValidMovementRow({ date: parsedDate, amount })) continue;
+    if (!parsedDate || amount === null || amount === undefined || amount === "" || !Number.isFinite(amount) || amount === 0) continue;
 
     let id = _asCleanString(row[5]);
     if (!_isUuidV4(id)) {
@@ -251,10 +255,10 @@ function procesarSueldos(ss) {
 
     movements.push({
       id,
-      type: "Sueldo",
+      type: esSaldoInicial ? "Saldo Inicial" : "Sueldo",
       date: parsedDate,
       amount,
-      description: concepto || "Sueldo"
+      description: concepto || (esSaldoInicial ? "Saldo Inicial" : "Sueldo")
     });
 
     salaries.push({

@@ -215,6 +215,34 @@
     </div>
   </section>
 
+  <!-- ADMIN -->
+  <section id="sec-adm" class="section">
+    <div class="page-wrap">
+      <div class="sec-head">
+        <div class="sec-icon blue">
+          <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M5 5l14 14M19 5L5 19"/></svg>
+        </div>
+        <div>
+          <div class="sec-title">Admin</div>
+          <div class="sec-sub">Errores de sincronizacion con Sheets</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="card-label">Sincronizacion Sheets</p>
+        <button type="button" class="btn btn-outline" id="btnAdminRefresh" onclick="cargarErroresSheetsAdmin()">
+          <div class="spin"></div><span class="lbl">Actualizar errores</span>
+        </button>
+        <button type="button" class="btn btn-outline" id="btnAdminProcess" onclick="procesarPendientesSheetsAdmin()" style="margin-top:10px">
+          <div class="spin"></div><span class="lbl">Procesar pendientes</span>
+        </button>
+        <div class="mov-list" id="adminSheetErrors" style="margin-top:14px">
+          <div class="mov-empty">Sin datos cargados</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <nav class="bottom-nav">
     <div class="bottom-nav-inner">
       <button class="nav-btn active" id="nav-mov" onclick="mostrar('mov')">
@@ -229,6 +257,10 @@
         <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z"/><path d="M12 12v3M10.5 13.5h3"/></svg>
         Saldo
       </button>
+      <button class="nav-btn" id="nav-adm" onclick="mostrar('adm')" style="display:none">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>
+        Admin
+      </button>
     </div>
   </nav>
 
@@ -242,6 +274,7 @@
 <script src="./js/movimientos.js"></script>
 <script src="./js/gastos.js"></script>
 <script src="./js/saldo.js"></script>
+<script src="./js/admin.js"></script>
 <script src="./js/ui.js"></script>
 <script src="./js/datepicker.js"></script>
 

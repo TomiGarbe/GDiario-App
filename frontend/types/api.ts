@@ -3,6 +3,7 @@ export type MovementKind =
   | "venta"
   | "gasto"
   | "sueldo"
+  | "saldo_inicial"
   | "entrega_dinero"
   | "pago_cliente";
 

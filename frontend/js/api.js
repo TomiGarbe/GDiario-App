@@ -188,6 +188,24 @@ function mapBackendMovementToLegacy(mov) {
         detalle: m.description || 'Ayudantes',
         editable: true
       };
+    case 'saldo_inicial':
+      return {
+        id: m.id,
+        fecha: m.date,
+        tipo: 'Gasto',
+        cliente: '',
+        monto: num(m.amount),
+        datos: {
+          empleados: salaries.map(function(s) {
+            return {
+              nombre: s && s.employee ? s.employee : '',
+              monto: num(s && s.subtotal)
+            };
+          })
+        },
+        detalle: m.description || 'Saldo Inicial',
+        editable: false
+      };
     case 'gasto':
       return {
         id: m.id,

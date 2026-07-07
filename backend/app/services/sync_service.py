@@ -292,7 +292,7 @@ class SyncService:
             if movement_type in (MovementType.COMPRA, MovementType.VENTA):
                 if movement.salaries or movement.client_payments:
                     raise ValueError(f"Movement {movement.external_id} has invalid detail types for {movement_type.value}")
-            elif movement_type == MovementType.SUELDO:
+            elif movement_type in (MovementType.SUELDO, MovementType.SALDO_INICIAL):
                 if movement.items or movement.client_payments:
                     raise ValueError(f"Movement {movement.external_id} has invalid detail types for {movement_type.value}")
             elif movement_type == MovementType.PAGO_CLIENTE:
@@ -579,7 +579,7 @@ class SyncService:
             if row_type in (MovementType.COMPRA, MovementType.VENTA):
                 if movement.salaries or movement.client_payments:
                     raise ValueError(f"Movement {movement.external_id} has invalid detail types for {row_type.value}")
-            elif row_type == MovementType.SUELDO:
+            elif row_type in (MovementType.SUELDO, MovementType.SALDO_INICIAL):
                 if movement.items or movement.client_payments:
                     raise ValueError(f"Movement {movement.external_id} has invalid detail types for {row_type.value}")
             elif row_type == MovementType.PAGO_CLIENTE:
@@ -791,6 +791,7 @@ class SyncService:
             and db_movement.type == sheet_snapshot["type"]
             and db_movement.amount == sheet_snapshot["amount"]
             and db_items == sheet_items
+            and db_salaries == sheet_salaries
             and db_client_payments == sheet_client_payments
         )
 
@@ -840,7 +841,7 @@ class SyncService:
                 return ZERO
             return sum((item.subtotal for item in movement.items), ZERO)
 
-        if movement_type == MovementType.SUELDO and movement.salaries:
+        if movement_type in (MovementType.SUELDO, MovementType.SALDO_INICIAL) and movement.salaries:
             return sum((salary.subtotal for salary in movement.salaries), ZERO)
 
         if movement_type == MovementType.PAGO_CLIENTE and movement.client_payments:

@@ -6,6 +6,8 @@ const MOVEMENT_TYPE_TO_BACKEND = {
   "venta": "venta",
   "gasto": "gasto",
   "sueldo": "sueldo",
+  "saldo inicial": "saldo_inicial",
+  "saldo_inicial": "saldo_inicial",
   "pago": "pago_cliente",
   "pago cliente": "pago_cliente",
   "pago_cliente": "pago_cliente",
@@ -22,19 +24,7 @@ function syncMovementsToBackend() {
   try {
     Logger.log("SYNC movimientos iniciado");
 
-    const movementsRows = getSheetData("MOVEMENTS");
-    const itemsRows = getSheetData("ITEMS");
-    const salariesRows = getSheetData("SALARIES");
-    const clientPaymentsRows = getSheetData("CLIENT_PAYMENTS");
-
-    const movementsById = buildMovements(movementsRows);
-    attachItems(movementsById, itemsRows);
-    attachSalaries(movementsById, salariesRows);
-    attachClientPayments(movementsById, clientPaymentsRows);
-
-    const payloadFull = buildMainPayload(movementsById);
-
-    validateMainPayload(payloadFull);
+    const payloadFull = buildCurrentSheetFullPayload_();
 
     const fullResponse = sendToBackend("/sync/full", payloadFull);
     Logger.log("Sync movements OK");
@@ -46,6 +36,22 @@ function syncMovementsToBackend() {
     Logger.log("SYNC movimientos error: " + error.message);
     throw error;
   }
+}
+
+function buildCurrentSheetFullPayload_() {
+  const movementsRows = getSheetData("MOVEMENTS");
+  const itemsRows = getSheetData("ITEMS");
+  const salariesRows = getSheetData("SALARIES");
+  const clientPaymentsRows = getSheetData("CLIENT_PAYMENTS");
+
+  const movementsById = buildMovements(movementsRows);
+  attachItems(movementsById, itemsRows);
+  attachSalaries(movementsById, salariesRows);
+  attachClientPayments(movementsById, clientPaymentsRows);
+
+  const payloadFull = buildMainPayload(movementsById);
+  validateMainPayload(payloadFull);
+  return payloadFull;
 }
 
 function syncCatalogToBackend() {
@@ -160,6 +166,63 @@ function syncOperationalSheetsFromExport(data) {
   syncCuentasFromExport(data);
   syncSueldosFromExport(data);
   syncGastosFromExport(data);
+}
+
+function previewSyncSheetToBackend() {
+  const sheetPayload = buildCurrentSheetFullPayload_();
+  const appExport = getAppExportForCurrentPeriod_();
+  return compareSyncSources_(sheetPayload.movements, appExport.movements || []);
+}
+
+function previewSyncBackendToSheet() {
+  const sheetPayload = buildCurrentSheetFullPayload_();
+  const appExport = getAppExportForCurrentPeriod_();
+  return compareSyncSources_(sheetPayload.movements, appExport.movements || []);
+}
+
+function getAppExportForCurrentPeriod_() {
+  const period = getPeriodPayload();
+  const periodId = Number(period.year) * 100 + Number(period.month);
+  return getFromBackend("/sync/full?period_id=" + encodeURIComponent(periodId)) || {};
+}
+
+function compareSyncSources_(sheetMovements, appMovements) {
+  const sheetById = {};
+  const appById = {};
+
+  (sheetMovements || []).forEach((movement) => {
+    const id = String((movement && (movement.external_id || movement.id)) || "").trim();
+    if (id) sheetById[id] = movement;
+  });
+
+  (appMovements || []).forEach((movement) => {
+    const id = String((movement && (movement.id || movement.external_id)) || "").trim();
+    if (id) appById[id] = movement;
+  });
+
+  const onlyInSheet = Object.keys(sheetById)
+    .filter((id) => !appById[id])
+    .map((id) => describeSyncMovement_(id, sheetById[id]));
+
+  const onlyInApp = Object.keys(appById)
+    .filter((id) => !sheetById[id])
+    .map((id) => describeSyncMovement_(id, appById[id]));
+
+  return {
+    only_in_sheet: onlyInSheet,
+    only_in_app: onlyInApp,
+    has_differences: onlyInSheet.length > 0 || onlyInApp.length > 0
+  };
+}
+
+function describeSyncMovement_(id, movement) {
+  return {
+    id: id,
+    date: String((movement && movement.date) || ""),
+    type: String((movement && movement.type) || ""),
+    amount: String((movement && movement.amount) || ""),
+    description: String((movement && movement.description) || "")
+  };
 }
 
 function syncProductSheetFromExport(sheetName, data) {
@@ -308,8 +371,7 @@ function syncCuentasFromExport(data) {
     .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])));
 
   const finalRows = [padRow_(headers, 10)].concat(keptRows.map((row) => padRow_(row, 10)), appRows.map((row) => padRow_(row, 10)));
-  sheet.clearContents();
-  sheet.getRange(1, 1, finalRows.length, 10).setValues(finalRows);
+  replaceSheetTablePreservingExtraColumns_(sheet, finalRows, 10);
 }
 
 function syncSueldosFromExport(data) {
@@ -318,9 +380,7 @@ function syncSueldosFromExport(data) {
   const headers = values.length ? values[0] : ["Fecha", "Empleado", "Tipo", "Descripción", "Monto", "movement_id"];
   const keptRows = values.length > 1
     ? values.slice(1).filter((row) => {
-      const tipo = syncLowerTrim_(row[2]);
-      const concepto = syncLowerTrim_(row[3]);
-      return tipo !== "adelanto" && concepto.indexOf("adelanto") === -1;
+      return !syncLooksLikeUuid_(row[5]);
     })
     : [];
 
@@ -334,11 +394,13 @@ function syncSueldosFromExport(data) {
     .map((salary) => {
       const movement = movementById[String(salary && salary.movement_id || "").trim()];
       if (!movement) return null;
+      const movementType = String(movement && movement.type || "").trim().toLowerCase();
+      const salaryKind = movementType === "saldo_inicial" ? "Saldo Inicial" : "Adelanto";
       return [
         movement.date || "",
         syncSheetText_(salary && salary.employee_name),
-        "Adelanto",
-        "Adelanto",
+        salaryKind,
+        salaryKind,
         syncNumber_(salary && salary.subtotal),
         salary && salary.movement_id || ""
       ];
@@ -347,8 +409,7 @@ function syncSueldosFromExport(data) {
     .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])));
 
   const finalRows = [padRow_(headers, 6)].concat(keptRows.map((row) => padRow_(row, 6)), appRows.map((row) => padRow_(row, 6)));
-  sheet.clearContents();
-  sheet.getRange(1, 1, finalRows.length, 6).setValues(finalRows);
+  replaceSheetTablePreservingExtraColumns_(sheet, finalRows, 6);
 }
 
 function syncGastosFromExport(data) {
@@ -387,8 +448,7 @@ function syncGastosFromExport(data) {
   const finalRows = [normalizedHeaders]
     .concat(keptRows.map((row) => padRow_(row, normalizedHeaders.length)))
     .concat(appRows.map((row) => padRow_(row, normalizedHeaders.length)));
-  sheet.clearContents();
-  sheet.getRange(1, 1, finalRows.length, normalizedHeaders.length).setValues(finalRows);
+  replaceSheetTablePreservingExtraColumns_(sheet, finalRows, normalizedHeaders.length);
 }
 
 function syncProductVariant_(productName) {
@@ -442,6 +502,20 @@ function syncUpperNoAccents_(value) {
 function syncIsTrue_(value) {
   const text = syncLowerTrim_(value);
   return text === "true" || text === "1" || text === "si" || text === "sí";
+}
+
+function syncLooksLikeUuid_(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+}
+
+function replaceSheetTablePreservingExtraColumns_(sheet, rows, width) {
+  const rowCount = Math.max(rows.length, 1);
+  sheet.getRange(1, 1, rowCount, width).setValues(rows);
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow > rowCount) {
+    sheet.getRange(rowCount + 1, 1, lastRow - rowCount, width).clearContent();
+  }
 }
 
 function padRow_(row, width) {

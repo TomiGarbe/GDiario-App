@@ -23,6 +23,7 @@ class MovementType(str, enum.Enum):
     VENTA = "venta"
     GASTO = "gasto"
     SUELDO = "sueldo"
+    SALDO_INICIAL = "saldo_inicial"
     ENTREGA_DINERO = "entrega_dinero"
     PAGO_CLIENTE = "pago_cliente"
 

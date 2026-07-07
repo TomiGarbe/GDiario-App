@@ -23,7 +23,8 @@ class ValidationService:
         salaries: list,
         client_payments: list,
     ) -> None:
-        if amount is None or amount < 0:
+        signed_salary_types = (MovementType.SUELDO, MovementType.SALDO_INICIAL)
+        if amount is None or (amount < 0 and movement_type not in signed_salary_types):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: amount must be >= 0")
 
         if movement_type in (MovementType.COMPRA, MovementType.VENTA):
@@ -32,7 +33,7 @@ class ValidationService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid movement structure for type '{movement_type.value}'",
                 )
-        elif movement_type == MovementType.SUELDO:
+        elif movement_type in signed_salary_types:
             if not salaries or items or client_payments:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -55,12 +56,12 @@ class ValidationService:
     def validate_movement_fields(movement) -> None:
         if movement.date is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: date cannot be null")
-        if movement.amount is None or movement.amount < 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: amount must be >= 0")
         try:
-            MovementType(movement.type)
+            movement_type = MovementType(movement.type)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid movement type: {movement.type}") from exc
+        if movement.amount is None or (movement.amount < 0 and movement_type not in (MovementType.SUELDO, MovementType.SALDO_INICIAL)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement: amount must be >= 0")
 
     @staticmethod
     def validate_item_fields(item) -> None:
@@ -73,8 +74,8 @@ class ValidationService:
 
     @staticmethod
     def validate_salary_fields(salary) -> None:
-        if salary.subtotal is None or salary.subtotal <= 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement_salary: subtotal must be > 0")
+        if salary.subtotal is None or salary.subtotal == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid movement_salary: subtotal must be != 0")
 
     @staticmethod
     def validate_client_payment_fields(client_payment) -> None:
@@ -91,7 +92,7 @@ class ValidationService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid type for movement_items",
             )
-        if detail_kind == "salary" and movement_type != MovementType.SUELDO:
+        if detail_kind == "salary" and movement_type not in (MovementType.SUELDO, MovementType.SALDO_INICIAL):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid type for movement_salaries",
@@ -112,7 +113,7 @@ class ValidationService:
         invalid = False
         if movement_type in (MovementType.COMPRA, MovementType.VENTA):
             invalid = item_count < 1 or salary_count > 0 or client_payment_count > 0
-        elif movement_type == MovementType.SUELDO:
+        elif movement_type in (MovementType.SUELDO, MovementType.SALDO_INICIAL):
             invalid = salary_count < 1 or item_count > 0 or client_payment_count > 0
         elif movement_type == MovementType.PAGO_CLIENTE:
             invalid = client_payment_count < 1 or item_count > 0 or salary_count > 0
@@ -151,7 +152,7 @@ class ValidationService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Amount mismatch: expected {expected}, got {movement.amount}",
                 )
-        elif movement_type == MovementType.SUELDO:
+        elif movement_type in (MovementType.SUELDO, MovementType.SALDO_INICIAL):
             expected = sum((salary.subtotal for salary in salaries), Decimal("0"))
             if abs(expected - movement.amount) > TOLERANCE:
                 logger.warning(

@@ -8,6 +8,7 @@ function normalizarTabKey(tabRaw) {
   if (tab === 'mov' || tab === 'movimiento' || tab === 'movimientos') return 'mov';
   if (tab === 'gas' || tab === 'gasto' || tab === 'gastos') return 'gas';
   if (tab === 'sal' || tab === 'saldo') return 'sal';
+  if (tab === 'adm' || tab === 'admin') return 'adm';
   return '';
 }
 
@@ -16,6 +17,7 @@ function tabKeyToStorageValue(tabKeyRaw) {
   if (tabKey === 'mov') return 'movimientos';
   if (tabKey === 'gas') return 'gastos';
   if (tabKey === 'sal') return 'saldo';
+  if (tabKey === 'adm') return 'admin';
   return '';
 }
 
@@ -171,6 +173,9 @@ function enlazarBotonActualizarDatos() {
 function inicializarApp() {
   if (_appInicializada || _appInicializando) return;
   _appInicializando = true;
+  if (typeof actualizarAdminVisible === 'function') {
+    actualizarAdminVisible();
+  }
   enlazarBotonActualizarDatos();
   cargarDatosInicialesEnSegundoPlano();
 
@@ -226,6 +231,10 @@ function mostrar(v) {
   }
 
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  if (v === 'adm' && (typeof esUsuarioAdmin !== 'function' || !esUsuarioAdmin())) {
+    showToast('No autorizado', 'error');
+    v = 'mov';
+  }
   document.getElementById('sec-' + v).classList.add('active');
 
   document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
@@ -237,6 +246,10 @@ function mostrar(v) {
       console.error('Error al actualizar vista de saldo:', err);
       showToast('No se pudo actualizar la vista de saldo', 'error');
     });
+  }
+
+  if (v === 'adm' && typeof cargarErroresSheetsAdmin === 'function') {
+    cargarErroresSheetsAdmin();
   }
 }
 

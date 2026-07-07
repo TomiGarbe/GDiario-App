@@ -65,13 +65,13 @@ export function buildPayloadFromForm(form: any) {
     };
   }
 
-  if (form.type === "sueldo") {
+  if (form.type === "sueldo" || form.type === "saldo_inicial") {
     const salaries = (Array.isArray(form.salaries) ? form.salaries : [])
       .map((s: any) => ({
         employee: String(s?.employee ?? "").trim(),
         subtotal: Number(s?.subtotal),
       }))
-      .filter((s: any) => s.employee && s.subtotal > 0);
+      .filter((s: any) => s.employee && s.subtotal !== 0);
 
     if (!salaries.length) {
       throw new Error("Debe haber al menos un sueldo valido");

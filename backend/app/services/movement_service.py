@@ -21,12 +21,11 @@ from app.models.period import Period
 from app.models.product import Product
 from app.schemas.movement import MovementCreate, MovementUpdate
 from app.services.google_sheets_writer import (
-    delete_movement_from_sheets,
-    sync_movement_to_sheets,
     test_sheets,
-    update_movement_sheets,
 )
 from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
+from app.models.sheet_sync_job import SheetSyncAction
+from app.services.sheet_sync_service import SheetSyncService
 from app.services.validation_service import ValidationService
 
 TWOPLACES = Decimal("0.0001")
@@ -177,10 +176,16 @@ class MovementService:
         sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
         if sheet_id:
             try:
-                sync_movement_to_sheets(sheet_id, movement)
+                SheetSyncService.enqueue_and_try(
+                    db,
+                    movement_id=movement.id,
+                    period_id=movement.period_id,
+                    sheet_id=sheet_id,
+                    action=SheetSyncAction.CREATE,
+                )
             except Exception:
                 logger.exception(
-                    "Failed to append movement to Google Sheets. movement_id=%s period_id=%s",
+                    "Failed to enqueue movement Google Sheets sync. movement_id=%s period_id=%s",
                     movement.id,
                     movement.period_id,
                 )
@@ -230,27 +235,36 @@ class MovementService:
         new_sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
         if previous_sheet_id and previous_sheet_id != new_sheet_id:
             try:
-                delete_movement_from_sheets(
-                    previous_sheet_id,
-                    str(movement.id),
-                    recalculate_product_cells=previous_product_cells,
+                SheetSyncService.enqueue_and_try(
+                    db,
+                    movement_id=movement.id,
+                    period_id=previous_period_id,
+                    sheet_id=previous_sheet_id,
+                    action=SheetSyncAction.DELETE,
                 )
             except Exception:
                 logger.exception(
-                    "Failed to delete movement from previous Google Sheet on update. movement_id=%s period_id=%s",
+                    "Failed to enqueue previous Google Sheet delete on update. movement_id=%s period_id=%s",
                     movement.id,
                     previous_period_id,
                 )
         if new_sheet_id:
             try:
-                update_movement_sheets(
-                    new_sheet_id,
-                    movement,
-                    previous_product_cells=previous_product_cells if previous_sheet_id == new_sheet_id else None,
+                SheetSyncService.enqueue_and_try(
+                    db,
+                    movement_id=movement.id,
+                    period_id=movement.period_id,
+                    sheet_id=new_sheet_id,
+                    action=SheetSyncAction.UPDATE,
+                    payload={
+                        "previous_product_cells": MovementService._serialize_product_cells(previous_product_cells)
+                        if previous_sheet_id == new_sheet_id
+                        else [],
+                    },
                 )
             except Exception:
                 logger.exception(
-                    "Failed to update movement in Google Sheets. movement_id=%s period_id=%s",
+                    "Failed to enqueue movement Google Sheets update. movement_id=%s period_id=%s",
                     movement.id,
                     movement.period_id,
                 )
@@ -279,14 +293,17 @@ class MovementService:
         sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
         if sheet_id:
             try:
-                delete_movement_from_sheets(
-                    sheet_id,
-                    str(movement_id),
-                    recalculate_product_cells=product_cells,
+                SheetSyncService.enqueue_and_try(
+                    db,
+                    movement_id=movement_id,
+                    period_id=period_id,
+                    sheet_id=sheet_id,
+                    action=SheetSyncAction.DELETE,
+                    payload={"previous_product_cells": MovementService._serialize_product_cells(product_cells)},
                 )
             except Exception:
                 logger.exception(
-                    "Failed to delete movement from Google Sheets. movement_id=%s period_id=%s",
+                    "Failed to enqueue movement Google Sheets delete. movement_id=%s period_id=%s",
                     movement_id,
                     period_id,
                 )
@@ -307,7 +324,7 @@ class MovementService:
         if movement_type in (MovementType.COMPRA, MovementType.VENTA):
             for item in items:
                 db.add(MovementItem(movement_id=movement_id, **item))
-        elif movement_type == MovementType.SUELDO:
+        elif movement_type in (MovementType.SUELDO, MovementType.SALDO_INICIAL):
             for salary in salaries:
                 db.add(MovementSalary(movement_id=movement_id, **salary))
         elif movement_type == MovementType.PAGO_CLIENTE:
@@ -378,7 +395,7 @@ class MovementService:
 
         if movement_type in (MovementType.COMPRA, MovementType.VENTA):
             amount = sum((item["subtotal"] for item in items), Decimal("0")).quantize(TWOPLACES)
-        elif movement_type == MovementType.SUELDO:
+        elif movement_type in (MovementType.SUELDO, MovementType.SALDO_INICIAL):
             amount = sum((salary["subtotal"] for salary in salaries), Decimal("0")).quantize(TWOPLACES)
         elif movement_type == MovementType.PAGO_CLIENTE:
             amount = sum((cp["subtotal"] for cp in client_payments), Decimal("0")).quantize(TWOPLACES)
@@ -396,7 +413,7 @@ class MovementService:
 
     @staticmethod
     def get_balance_until_date(db: Session, target_date) -> tuple[Decimal, Decimal, Decimal]:
-        debe_types = ("compra", "gasto", "sueldo")
+        debe_types = ("compra", "gasto", "sueldo", "saldo_inicial")
         haber_types = ("venta", "pago_cliente")
 
         total_debe = (
@@ -430,3 +447,10 @@ class MovementService:
         if period is None:
             return None
         return (period.sheet_id or "").strip() or None
+
+    @staticmethod
+    def _serialize_product_cells(cells: set[tuple] | None) -> list[list[str]]:
+        out: list[list[str]] = []
+        for movement_date, client_name, product_name in cells or set():
+            out.append([str(movement_date), str(client_name), str(product_name)])
+        return out

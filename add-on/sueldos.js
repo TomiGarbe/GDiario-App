@@ -37,6 +37,10 @@ function generarResumenSueldos(ss) {
   Object.keys(empleados).sort().forEach(emp => {
     const lista = empleados[emp];
 
+    const saldosIniciales = lista
+      .filter(r => ["saldo inicial", "saldo_inicial"].includes(r.tipo))
+      .sort((a, b) => a.fecha - b.fecha);
+
     const basePremioFalta = lista
       .filter(r => ["sueldo base", "premio", "falta"].includes(r.tipo))
       .sort((a, b) => a.fecha - b.fecha);
@@ -49,6 +53,16 @@ function generarResumenSueldos(ss) {
     let totalPremios = 0;
     let totalFaltas  = 0;
     let totalPagado  = 0;
+    let saldoInicial = 0;
+
+    saldosIniciales.forEach(r => {
+      saldoInicial += r.monto;
+      resultado.push([r.fecha, emp, r.concepto || "Saldo Inicial", r.monto]);
+    });
+
+    if (saldosIniciales.length > 0) {
+      resultado.push(["", emp, "SALDO INICIAL", saldoInicial]);
+    }
 
     // Sueldo base, premios y faltas
     basePremioFalta.forEach(r => {
@@ -69,15 +83,15 @@ function generarResumenSueldos(ss) {
     const sueldoTotal = totalBase + totalPremios - totalFaltas;
     resultado.push(["", emp, "TOTAL SUELDO", sueldoTotal]);
 
-    // Adelantos y otros pagos (se registran como negativos)
+    // Adelantos y otros pagos: el saldo respeta el signo cargado.
     pagos.forEach(r => {
-      const monto = -Math.abs(r.monto);
-      totalPagado += Math.abs(r.monto);
+      const monto = r.monto < 0 ? r.monto : -Math.abs(r.monto);
+      totalPagado += r.monto;
       resultado.push([r.fecha, emp, r.concepto, monto]);
     });
 
     resultado.push(["", emp, "TOTAL PAGADO", totalPagado]);
-    resultado.push(["", emp, "SALDO FINAL",  sueldoTotal - totalPagado]);
+    resultado.push(["", emp, "SALDO FINAL",  saldoInicial + sueldoTotal - totalPagado]);
   });
 
   hojaResumen.getRange(2, 1, resultado.length, 4).setValues(resultado);

@@ -7,6 +7,7 @@ from app.models.movement_salary import MovementSalary
 from app.models.period import Period
 from app.models.price import Price
 from app.models.product import Product
+from app.models.sheet_sync_job import SheetSyncAction, SheetSyncJob, SheetSyncStatus
 
 __all__ = [
     "Client",
@@ -19,4 +20,7 @@ __all__ = [
     "Period",
     "Price",
     "Product",
+    "SheetSyncAction",
+    "SheetSyncJob",
+    "SheetSyncStatus",
 ]

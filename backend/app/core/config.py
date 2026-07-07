@@ -18,6 +18,7 @@ class Settings:
     jwt_expire_days: int
     google_client_id: str
     allowed_emails: tuple[str, ...]
+    admin_emails: tuple[str, ...]
     sync_api_key: str
     google_credentials_json: str
 
@@ -46,6 +47,13 @@ def get_settings() -> Settings:
     if not allowed_emails:
         raise RuntimeError("ALLOWED_EMAILS is empty. Define at least one email in backend/.env")
 
+    admin_raw = os.getenv("ADMIN_EMAILS", "tomigarbe2003@gmail.com,cristiangarbe@gmail.com").strip()
+    admin_emails = tuple(
+        email.strip().lower()
+        for email in admin_raw.split(",")
+        if email.strip()
+    )
+
     jwt_algorithm = os.getenv("JWT_ALGORITHM", "HS256").strip() or "HS256"
     jwt_expire_days = int(os.getenv("JWT_EXPIRE_DAYS", "365"))
     sync_api_key = os.getenv("SYNC_API_KEY", "").strip()
@@ -60,6 +68,7 @@ def get_settings() -> Settings:
         jwt_expire_days=jwt_expire_days,
         google_client_id=google_client_id,
         allowed_emails=allowed_emails,
+        admin_emails=admin_emails,
         sync_api_key=sync_api_key,
         google_credentials_json=google_credentials_json,
     )

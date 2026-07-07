@@ -320,6 +320,7 @@ def append_salary_detail_to_salaries(sheet_id: str, movement: Movement, salary) 
     movement_id = str(movement.id).strip()
     salary_amount = _extract_salary_amount(salary)
     salary_date = str(movement.date)
+    salary_kind = "Saldo Inicial" if _movement_type_key(movement) == "saldo_inicial" else "Adelanto"
     print("WRITE SALARY → SALARIES", movement.id, employee)
     _upsert_salary_row(
         service=service,
@@ -355,8 +356,8 @@ def append_salary_summary_to_sueldos(sheet_id: str, movement: Movement, salary) 
         row_values=[
             salary_date,
             employee,
-            "Adelanto",
-            "Adelanto",
+            salary_kind,
+            salary_kind,
             salary_amount,
             movement_id,
         ],

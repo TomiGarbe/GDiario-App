@@ -43,7 +43,7 @@ class SyncMovementDetailPayload(BaseModel):
 
 class SyncMovementPayload(BaseModel):
     date: date
-    type: Literal["compra", "venta", "gasto", "pago", "sueldo", "entrega_dinero", "pago_cliente"]
+    type: Literal["compra", "venta", "gasto", "pago", "sueldo", "saldo_inicial", "entrega_dinero", "pago_cliente"]
     client: str | None = Field(default=None, max_length=120)
     employee: str | None = Field(default=None, max_length=120)
     amount: Decimal
@@ -243,7 +243,7 @@ class SyncMovementDetailByIdPayload(BaseModel):
 
 class SyncMovementByIdPayload(BaseModel):
     date: date
-    type: Literal["compra", "venta", "gasto", "pago", "sueldo", "entrega_dinero", "pago_cliente"]
+    type: Literal["compra", "venta", "gasto", "pago", "sueldo", "saldo_inicial", "entrega_dinero", "pago_cliente"]
     client_id: UUID | None = None
     employee_id: UUID | None = None
     amount: Decimal
@@ -278,7 +278,7 @@ class MovementSyncPayload(BaseModel):
     id: UUID
     period_id: int
     date: date
-    type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
+    type: Literal["compra", "venta", "gasto", "sueldo", "saldo_inicial", "entrega_dinero", "pago_cliente"]
     amount: Decimal
     description: str | None = Field(default=None, max_length=500)
     updated_at: datetime | None = None
@@ -384,7 +384,7 @@ class SyncFullMovementClientPaymentPayload(BaseModel):
 
 class SyncFullMovementPayload(BaseModel):
     external_id: UUID
-    type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
+    type: Literal["compra", "venta", "gasto", "sueldo", "saldo_inicial", "entrega_dinero", "pago_cliente"]
     date: date
     amount: Decimal
     description: str | None = Field(default=None, max_length=500)
@@ -422,7 +422,7 @@ class SyncFullExportResponse(BaseModel):
 
 class SyncMirrorMovementPayload(BaseModel):
     external_id: UUID
-    type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
+    type: Literal["compra", "venta", "gasto", "sueldo", "saldo_inicial", "entrega_dinero", "pago_cliente"]
     date: date
     amount: Decimal
     description: str | None = Field(default=None, max_length=500)

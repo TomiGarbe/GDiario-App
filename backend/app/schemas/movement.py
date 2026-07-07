@@ -53,7 +53,7 @@ class MovementClientPaymentIn(BaseModel):
 class MovementCreate(BaseModel):
     period_id: int
     date: date
-    type: Literal["compra", "venta", "gasto", "sueldo", "entrega_dinero", "pago_cliente"]
+    type: Literal["compra", "venta", "gasto", "sueldo", "saldo_inicial", "entrega_dinero", "pago_cliente"]
     amount: Decimal
     description: str | None = Field(default=None, max_length=500)
     items: list[MovementItemIn] | None = None

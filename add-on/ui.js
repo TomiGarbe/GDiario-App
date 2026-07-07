@@ -105,6 +105,14 @@ function accionSyncToBackend() {
 
 function accionSyncMovimientosToBackend() {
   try {
+    const preview = previewSyncSheetToBackend();
+    if (preview && preview.has_differences) {
+      return navegarPreviewSync_(
+        "Diferencias antes de enviar a app",
+        preview,
+        "accionConfirmSyncMovimientosToBackend"
+      );
+    }
     syncMovementsToBackend();
     return notificar("Movimientos enviados a la app");
   } catch (e) {
@@ -123,6 +131,14 @@ function accionSyncCatalogoToBackend() {
 
 function accionSyncFromBackend() {
   try {
+    const preview = previewSyncBackendToSheet();
+    if (preview && preview.has_differences) {
+      return navegarPreviewSync_(
+        "Diferencias antes de traer app a Sheets",
+        preview,
+        "accionConfirmSyncFromBackend"
+      );
+    }
     const result = syncFromBackendToSheet();
     return notificar(
       "Sync desde app listo: " +
@@ -132,4 +148,72 @@ function accionSyncFromBackend() {
   } catch (e) {
     return notificar(e && e.message ? e.message : String(e));
   }
+}
+
+function accionConfirmSyncMovimientosToBackend() {
+  try {
+    syncMovementsToBackend();
+    return notificar("Movimientos enviados a la app");
+  } catch (e) {
+    return notificar(e && e.message ? e.message : String(e));
+  }
+}
+
+function accionConfirmSyncFromBackend() {
+  try {
+    const result = syncFromBackendToSheet();
+    return notificar(
+      "Sync desde app listo: " +
+      result.movements + " movs, " +
+      result.movement_items + " items"
+    );
+  } catch (e) {
+    return notificar(e && e.message ? e.message : String(e));
+  }
+}
+
+function navegarPreviewSync_(title, preview, confirmFn) {
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(buildPreviewSyncCard_(title, preview, confirmFn)))
+    .build();
+}
+
+function buildPreviewSyncCard_(title, preview, confirmFn) {
+  const card = CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle(title));
+
+  const section = CardService.newCardSection()
+    .addWidget(CardService.newTextParagraph().setText(
+      "En Sheets y en la app hay diferencias. No se cambio nada todavia."
+    ))
+    .addWidget(CardService.newTextParagraph().setText(
+      "Solo en app: " + preview.only_in_app.length + "\nSolo en Sheets: " + preview.only_in_sheet.length
+    ));
+
+  appendPreviewRows_(section, "Solo en app", preview.only_in_app);
+  appendPreviewRows_(section, "Solo en Sheets", preview.only_in_sheet);
+
+  section.addWidget(
+    CardService.newTextButton()
+      .setText("Aplicar igual")
+      .setOnClickAction(CardService.newAction().setFunctionName(confirmFn))
+  );
+
+  card.addSection(section);
+  return card.build();
+}
+
+function appendPreviewRows_(section, label, rows) {
+  const lines = (rows || []).slice(0, 10).map((row) => {
+    return [
+      row.date || "-",
+      row.type || "-",
+      row.amount || "0",
+      row.description || row.id
+    ].join(" | ");
+  });
+  if ((rows || []).length > 10) {
+    lines.push("... y " + ((rows || []).length - 10) + " mas");
+  }
+  section.addWidget(CardService.newTextParagraph().setText(label + ":\n" + (lines.join("\n") || "Ninguno")));
 }

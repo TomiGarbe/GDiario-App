@@ -46,3 +46,10 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         return sub
     except JWTError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido") from exc
+
+def require_admin_user(current_user: str = Depends(get_current_user)) -> str:
+    settings = get_settings()
+    email = current_user.strip().lower()
+    if email not in settings.admin_emails:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")
+    return email
