@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "9a7d4b2e6c31"
@@ -18,8 +19,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    sheet_sync_action = sa.Enum("CREATE", "UPDATE", "DELETE", name="sheet_sync_action")
-    sheet_sync_status = sa.Enum("PENDING", "FAILED", "SUCCEEDED", name="sheet_sync_status")
+    sheet_sync_action = postgresql.ENUM("CREATE", "UPDATE", "DELETE", name="sheet_sync_action", create_type=False)
+    sheet_sync_status = postgresql.ENUM("PENDING", "FAILED", "SUCCEEDED", name="sheet_sync_status", create_type=False)
     sheet_sync_action.create(op.get_bind(), checkfirst=True)
     sheet_sync_status.create(op.get_bind(), checkfirst=True)
 
