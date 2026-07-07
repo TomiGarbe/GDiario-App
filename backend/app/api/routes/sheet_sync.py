@@ -47,6 +47,11 @@ class ProcessDueOut(BaseModel):
     failed: int
 
 
+def _enum_text(value) -> str:
+    raw = value.value if hasattr(value, "value") else value
+    return str(raw or "").strip().lower()
+
+
 def _job_out(row: tuple[SheetSyncJob, Movement | None]) -> SheetSyncJobOut:
     job, movement = row
     return SheetSyncJobOut(
@@ -54,8 +59,8 @@ def _job_out(row: tuple[SheetSyncJob, Movement | None]) -> SheetSyncJobOut:
         movement_id=job.movement_id,
         period_id=job.period_id,
         sheet_id=job.sheet_id,
-        action=job.action.value,
-        status=job.status.value,
+        action=_enum_text(job.action),
+        status=_enum_text(job.status),
         attempts=job.attempts,
         max_attempts=job.max_attempts,
         next_retry_at=job.next_retry_at,
@@ -64,7 +69,7 @@ def _job_out(row: tuple[SheetSyncJob, Movement | None]) -> SheetSyncJobOut:
         updated_at=job.updated_at,
         completed_at=job.completed_at,
         movement_date=str(movement.date) if movement is not None and movement.date is not None else None,
-        movement_type=movement.type.value if movement is not None and movement.type is not None else None,
+        movement_type=_enum_text(movement.type) if movement is not None and movement.type is not None else None,
         movement_amount=str(movement.amount) if movement is not None and movement.amount is not None else None,
         movement_description=movement.description if movement is not None else None,
     )
@@ -84,7 +89,7 @@ def list_sheet_sync_jobs(
     )
     if status_filter:
         try:
-            status_value = SheetSyncStatus(status_filter)
+            status_value = SheetSyncStatus(str(status_filter).strip().lower())
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status") from exc
         stmt = stmt.where(SheetSyncJob.status == status_value)

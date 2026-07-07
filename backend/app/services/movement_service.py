@@ -176,8 +176,7 @@ class MovementService:
         sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
         if sheet_id:
             try:
-                SheetSyncService.enqueue_and_try(
-                    db,
+                SheetSyncService.enqueue_and_try_isolated(
                     movement_id=movement.id,
                     period_id=movement.period_id,
                     sheet_id=sheet_id,
@@ -235,8 +234,7 @@ class MovementService:
         new_sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
         if previous_sheet_id and previous_sheet_id != new_sheet_id:
             try:
-                SheetSyncService.enqueue_and_try(
-                    db,
+                SheetSyncService.enqueue_and_try_isolated(
                     movement_id=movement.id,
                     period_id=previous_period_id,
                     sheet_id=previous_sheet_id,
@@ -250,8 +248,7 @@ class MovementService:
                 )
         if new_sheet_id:
             try:
-                SheetSyncService.enqueue_and_try(
-                    db,
+                SheetSyncService.enqueue_and_try_isolated(
                     movement_id=movement.id,
                     period_id=movement.period_id,
                     sheet_id=new_sheet_id,
@@ -293,8 +290,7 @@ class MovementService:
         sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
         if sheet_id:
             try:
-                SheetSyncService.enqueue_and_try(
-                    db,
+                SheetSyncService.enqueue_and_try_isolated(
                     movement_id=movement_id,
                     period_id=period_id,
                     sheet_id=sheet_id,

@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.db import SessionLocal
 from app.models.movement import Movement
 from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
@@ -65,6 +66,25 @@ class SheetSyncService:
         )
         SheetSyncService.process_job(db, job.id)
         return job
+
+    @staticmethod
+    def enqueue_and_try_isolated(
+        *,
+        movement_id: UUID,
+        period_id: int,
+        sheet_id: str,
+        action: SheetSyncAction,
+        payload: dict | None = None,
+    ) -> SheetSyncJob:
+        with SessionLocal() as db:
+            return SheetSyncService.enqueue_and_try(
+                db,
+                movement_id=movement_id,
+                period_id=period_id,
+                sheet_id=sheet_id,
+                action=action,
+                payload=payload,
+            )
 
     @staticmethod
     def process_due(db: Session, *, limit: int = 25) -> dict[str, int]:

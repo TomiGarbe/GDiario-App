@@ -3,8 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.api.router import api_router
+from app.core.migrations import run_startup_migrations
 
 app = FastAPI(title="GDiario API")
+
+
+@app.on_event("startup")
+def startup() -> None:
+    run_startup_migrations()
 
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
