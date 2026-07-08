@@ -52,18 +52,7 @@ function generarResumenSueldos(ss) {
     let totalBase    = 0;
     let totalPremios = 0;
     let totalFaltas  = 0;
-    let saldoInicial = 0;
-    let totalAdelantos = 0;
-    let efectoAdelantosEnSaldo = 0;
-
-    saldosIniciales.forEach(r => {
-      saldoInicial += r.monto;
-      resultado.push([r.fecha, emp, r.concepto || "Saldo Inicial", r.monto]);
-    });
-
-    if (saldosIniciales.length > 0) {
-      resultado.push(["", emp, "SALDO INICIAL", saldoInicial]);
-    }
+    let totalSaldoMovimientos = 0;
 
     // Sueldo base, premios y faltas
     basePremioFalta.forEach(r => {
@@ -84,15 +73,20 @@ function generarResumenSueldos(ss) {
     const sueldoTotal = totalBase + totalPremios - totalFaltas;
     resultado.push(["", emp, "TOTAL SUELDO", sueldoTotal]);
 
-    // Adelantos: positivo descuenta saldo; negativo suma saldo.
-    adelantos.forEach(r => {
-      totalAdelantos += r.monto;
-      efectoAdelantosEnSaldo += -r.monto;
-      resultado.push([r.fecha, emp, r.concepto || "Adelanto", -r.monto]);
+    saldosIniciales.forEach(r => {
+      totalSaldoMovimientos += r.monto;
+      resultado.push([r.fecha, emp, r.concepto || "Saldo Inicial", r.monto]);
     });
 
-    resultado.push(["", emp, "TOTAL ADELANTOS", totalAdelantos]);
-    resultado.push(["", emp, "SALDO FINAL",  saldoInicial + sueldoTotal + efectoAdelantosEnSaldo]);
+    // Adelantos: positivo descuenta saldo; negativo suma saldo.
+    adelantos.forEach(r => {
+      const efectoSaldo = -r.monto;
+      totalSaldoMovimientos += efectoSaldo;
+      resultado.push([r.fecha, emp, r.concepto || "Adelanto", efectoSaldo]);
+    });
+
+    resultado.push(["", emp, "TOTAL SALDO / ADELANTOS / OTROS", totalSaldoMovimientos]);
+    resultado.push(["", emp, "SALDO FINAL",  sueldoTotal + totalSaldoMovimientos]);
   });
 
   hojaResumen.getRange(2, 1, resultado.length, 4).setValues(resultado);

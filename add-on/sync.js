@@ -334,6 +334,7 @@ function syncProductSheetFromExport(sheetName, data) {
     });
     sheet.getRange(meta.rowNumber, firstDateColumn, 1, dateColumnCount).setValues([rowValues]);
   });
+  aplicarFormatoHojaPorNombre(sheet);
 }
 
 function syncCuentasFromExport(data) {
@@ -516,6 +517,7 @@ function replaceSheetTablePreservingExtraColumns_(sheet, rows, width) {
   if (lastRow > rowCount) {
     sheet.getRange(rowCount + 1, 1, lastRow - rowCount, width).clearContent();
   }
+  aplicarFormatoHojaPorNombre(sheet);
 }
 
 function padRow_(row, width) {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from datetime import date
 from decimal import Decimal
@@ -43,6 +44,20 @@ MOVEMENT_ID_COLUMN_BY_SHEET = {
     "SUELDOS": 5,
     "GASTOS": 3,
 }
+SHEETS_FONT_FAMILY = "Calibri"
+SHEETS_FONT_SIZE = 11
+SHEETS_NUMBER_PATTERN = "#,##0.00"
+SHEETS_MONEY_PATTERN = "$#,##0.00"
+SHEETS_DATE_PATTERN = "dd/mm/yyyy"
+SHEET_COLUMN_FORMATS = {
+    "MOVEMENTS": {"date": [2], "money": [3], "number": []},
+    "ITEMS": {"date": [], "money": [4, 5], "number": [3]},
+    "SALARIES": {"date": [3], "money": [2], "number": []},
+    "CLIENT_PAYMENTS": {"date": [], "money": [2], "number": []},
+    "CUENTAS": {"date": [0], "money": [7, 8], "number": []},
+    "SUELDOS": {"date": [0], "money": [4], "number": []},
+    "GASTOS": {"date": [0], "money": [2], "number": []},
+}
 
 
 @lru_cache(maxsize=1)
@@ -83,6 +98,125 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=credentials)
 
 
+def _format_sheet_rows(
+    service,
+    sheet_id: str,
+    sheet_name: str,
+    start_row: int,
+    end_row: int,
+    *,
+    start_col: int = 0,
+    end_col: int | None = None,
+    number_columns: list[int] | None = None,
+    money_columns: list[int] | None = None,
+    date_columns: list[int] | None = None,
+) -> None:
+    if start_row <= 0 or end_row < start_row:
+        return
+
+    formats = SHEET_COLUMN_FORMATS.get(sheet_name, {})
+    number_cols = list(number_columns if number_columns is not None else formats.get("number", []))
+    money_cols = list(money_columns if money_columns is not None else formats.get("money", []))
+    date_cols = list(date_columns if date_columns is not None else formats.get("date", []))
+    if end_col is None:
+        all_cols = number_cols + money_cols + date_cols
+        end_col = (max(all_cols) + 1) if all_cols else start_col + 1
+
+    gid = get_sheet_gid(service, sheet_id, sheet_name)
+    requests = [
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": gid,
+                    "startRowIndex": start_row - 1,
+                    "endRowIndex": end_row,
+                    "startColumnIndex": start_col,
+                    "endColumnIndex": end_col,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "textFormat": {
+                            "fontFamily": SHEETS_FONT_FAMILY,
+                            "fontSize": SHEETS_FONT_SIZE,
+                        }
+                    }
+                },
+                "fields": "userEnteredFormat.textFormat.fontFamily,userEnteredFormat.textFormat.fontSize",
+            }
+        }
+    ]
+
+    def add_column_format(col: int, fmt_type: str, pattern: str) -> None:
+        if col < start_col or col >= end_col:
+            return
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": gid,
+                        "startRowIndex": start_row - 1,
+                        "endRowIndex": end_row,
+                        "startColumnIndex": col,
+                        "endColumnIndex": col + 1,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "numberFormat": {
+                                "type": fmt_type,
+                                "pattern": pattern,
+                            }
+                        }
+                    },
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            }
+        )
+
+    for col in date_cols:
+        add_column_format(col, "DATE", SHEETS_DATE_PATTERN)
+    for col in number_cols:
+        add_column_format(col, "NUMBER", SHEETS_NUMBER_PATTERN)
+    for col in money_cols:
+        add_column_format(col, "CURRENCY", SHEETS_MONEY_PATTERN)
+
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=sheet_id,
+        body={"requests": requests},
+    ).execute()
+
+
+def _rows_from_updated_range(updated_range: str | None) -> tuple[int, int] | None:
+    raw = str(updated_range or "")
+    match = re.search(r"![A-Z]+(\d+)(?::[A-Z]+(\d+))?$", raw)
+    if not match:
+        return None
+    start = int(match.group(1))
+    end = int(match.group(2) or match.group(1))
+    return start, end
+
+
+def _format_append_response(
+    service,
+    sheet_id: str,
+    sheet_name: str,
+    response: dict,
+    *,
+    col_count: int,
+) -> None:
+    rows = _rows_from_updated_range((response.get("updates") or {}).get("updatedRange"))
+    if rows is None:
+        return
+    _format_sheet_rows(
+        service,
+        sheet_id,
+        sheet_name,
+        rows[0],
+        rows[1],
+        start_col=0,
+        end_col=col_count,
+    )
+
+
 def append_movement(sheet_id: str, movement: Movement) -> None:
     service = get_sheets_service()
     values = [[
@@ -95,12 +229,13 @@ def append_movement(sheet_id: str, movement: Movement) -> None:
         movement.source or "",
     ]]
     try:
-        service.spreadsheets().values().append(
+        response = service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
             range="MOVEMENTS!A:G",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
+        _format_append_response(service, sheet_id, "MOVEMENTS", response, col_count=7)
     except Exception as e:
         print(f"[ERROR] {str(e)}")
         raise
@@ -124,12 +259,13 @@ def append_items(sheet_id: str, items: list[MovementItem]) -> None:
     ]
 
     try:
-        service.spreadsheets().values().append(
+        response = service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
             range="ITEMS!A:F",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
+        _format_append_response(service, sheet_id, "ITEMS", response, col_count=6)
     except Exception as e:
         print(f"[ERROR] {str(e)}")
         raise
@@ -206,12 +342,13 @@ def append_client_payments(sheet_id: str, payments: list[MovementClientPayment])
     ]
 
     try:
-        service.spreadsheets().values().append(
+        response = service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
             range="CLIENT_PAYMENTS!A:C",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
+        _format_append_response(service, sheet_id, "CLIENT_PAYMENTS", response, col_count=3)
     except Exception as e:
         print(f"[ERROR] {str(e)}")
         raise
@@ -236,12 +373,13 @@ def append_client_payments_to_cuentas(sheet_id: str, movement: Movement) -> None
             float(payment.subtotal),
             str(movement.id),
         ]]
-        service.spreadsheets().values().append(
+        response = service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
             range="CUENTAS!A:J",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
+        _format_append_response(service, sheet_id, "CUENTAS", response, col_count=10)
 
 
 def _movement_type_key(movement: Movement) -> str:
@@ -272,16 +410,26 @@ def _update_sheet_row(service, sheet_id: str, sheet_name: str, row_index: int, r
         valueInputOption="USER_ENTERED",
         body={"values": [row_values]},
     ).execute()
+    _format_sheet_rows(
+        service,
+        sheet_id,
+        sheet_name,
+        row_index,
+        row_index,
+        start_col=0,
+        end_col=len(row_values),
+    )
 
 
 def _append_sheet_row(service, sheet_id: str, sheet_name: str, row_values: list[object]) -> None:
     end_col = _to_col_letter(len(row_values) - 1)
-    service.spreadsheets().values().append(
+    response = service.spreadsheets().values().append(
         spreadsheetId=sheet_id,
         range=f"{sheet_name}!A:{end_col}",
         valueInputOption="USER_ENTERED",
         body={"values": [row_values]},
     ).execute()
+    _format_append_response(service, sheet_id, sheet_name, response, col_count=len(row_values))
 
 
 def _upsert_salary_row(
@@ -377,12 +525,13 @@ def append_gasto_to_sheet(sheet_id: str, movement: Movement) -> None:
         True,
     ]]
     service = get_sheets_service()
-    service.spreadsheets().values().append(
+    response = service.spreadsheets().values().append(
         spreadsheetId=sheet_id,
         range="GASTOS!A:E",
         valueInputOption="USER_ENTERED",
         body={"values": values},
     ).execute()
+    _format_append_response(service, sheet_id, "GASTOS", response, col_count=5)
 
 
 def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
@@ -686,6 +835,18 @@ def _recalculate_product_quantity(
             range=cell_ref,
             body={},
         ).execute()
+        _format_sheet_rows(
+            service,
+            spreadsheet_id,
+            sheet_name,
+            row_index,
+            row_index,
+            start_col=col_index,
+            end_col=col_index + 1,
+            number_columns=[col_index],
+            money_columns=[],
+            date_columns=[],
+        )
         return
 
     service.spreadsheets().values().update(
@@ -694,6 +855,18 @@ def _recalculate_product_quantity(
         valueInputOption="USER_ENTERED",
         body={"values": [[float(total_quantity)]]},
     ).execute()
+    _format_sheet_rows(
+        service,
+        spreadsheet_id,
+        sheet_name,
+        row_index,
+        row_index,
+        start_col=col_index,
+        end_col=col_index + 1,
+        number_columns=[col_index],
+        money_columns=[],
+        date_columns=[],
+    )
 
 
 def _sum_active_quantity_from_db(

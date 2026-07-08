@@ -146,6 +146,7 @@ function limpiarSaldosInicialesExistentes_(hojaCuentas, clientesObjetivo) {
   range.clearContent();
   if (kept.length > 0) {
     hojaCuentas.getRange(2, 1, kept.length, lastCol).setValues(kept);
+    aplicarFormatoHojaPorNombre(hojaCuentas);
   }
 
   const rowsToDelete = (lastRow - 1) - kept.length;
@@ -189,6 +190,10 @@ function insertarSaldosIniciales_(hojaCuentas, ssActual, saldos) {
 
   const formatoFecha = detectarFormatoFechaCuentas_(hojaCuentas);
   hojaCuentas.getRange(startRow, 1, filas.length, 1).setNumberFormat(formatoFecha);
+  aplicarFormatoRangoDatos(hojaCuentas, startRow, filas.length, 9, {
+    colFecha: 1,
+    colsMoneda: [8, 9]
+  });
 
   Logger.log("[Importar Saldos] Formato de fecha aplicado: %s", formatoFecha);
   filas.forEach((fila) => {

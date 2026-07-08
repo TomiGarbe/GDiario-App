@@ -111,6 +111,13 @@ def retry_sheet_sync_job(job_id: UUID, db: Session = Depends(get_db)) -> SheetSy
     return _job_out(row)
 
 
+@router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_sheet_sync_job(job_id: UUID, db: Session = Depends(get_db)) -> None:
+    deleted = SheetSyncService.delete_job(db, job_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sheet sync job not found")
+
+
 @router.post("/process-due", response_model=ProcessDueOut)
 def process_due_sheet_sync_jobs(
     limit: int = Query(default=25, ge=1, le=100),

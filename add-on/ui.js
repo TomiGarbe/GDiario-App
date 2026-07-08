@@ -13,14 +13,14 @@ function homepage() {
         .addWidget(btn("💰 Importar saldo inicial", "accionImportarSaldoInicial"))
         .addWidget(btn("📋 Actualizar detalle del mes", "accionActualizarDetalle"))
         .addWidget(btn("💵 Generar resumen de sueldos", "accionResumenSueldos"))
-        .addWidget(btn("🔄 Reconstruir movimientos", "accionReconstruirMovimientos"))
-        .addWidget(btn("📊 Sync precios/clientes a app", "accionSyncCatalogoToBackend"))
-        .addWidget(btn("⬆️ Sync desde sheets a app", "accionSyncMovimientosToBackend"))
-        .addWidget(btn("⬇️ Sync desde app a sheets", "accionSyncFromBackend"))
+        .addWidget(btn("📒 Traer precios mes anterior", "accionImportarPreciosMesAnterior"))
     )
     .addSection(
       CardService.newCardSection()
-        .addWidget(btn("Traer precios mes anterior", "accionImportarPreciosMesAnterior"))
+        .addWidget(btn("🔄 Reconstruir movimientos", "accionReconstruirMovimientos"))
+        .addWidget(btn("📊 Sync precios/clientes a app", "accionSyncCatalogoToBackend"))
+        .addWidget(btn("📤 Sync desde sheets a app", "accionSyncMovimientosToBackend"))
+        .addWidget(btn("📥 Sync desde app a sheets", "accionSyncFromBackend"))
     )
     .build();
 }

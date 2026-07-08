@@ -21,7 +21,7 @@ function writeMovementItems(items) {
     item.subtotal ?? ""
   ]);
 
-  aplicarFormatoTablaGenerica(sheet, 0, [4, 5, 6]);
+  aplicarFormatoTablaGenerica(sheet, 0, [5, 6], [4]);
 }
 
 function writeMovementSalaries(salaries) {
@@ -58,6 +58,7 @@ function _ensureSheetWithHeaders(nombre, headers) {
   if (!hasHeaders) {
     sheet.clear();
     sheet.appendRow(headers);
+    aplicarFormatoEncabezado(sheet);
   }
   return sheet;
 }
@@ -72,5 +73,6 @@ function _writeSheetRows(nombre, headers, data, rowMapper) {
     sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
   }
 
+  aplicarFormatoHojaPorNombre(sheet);
   return sheet;
 }

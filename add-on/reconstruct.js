@@ -1073,7 +1073,7 @@ function _writeSheetProducto(data, nombre) {
 
   const rows = data.map((m) => [m.date, m.client, m.type, m.product, m.quantity]);
   sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
-  aplicarFormatoTablaGenerica(sheet, 1, [5]);
+  aplicarFormatoTablaGenerica(sheet, 1, [], [5]);
 }
 
 function _writeSheetGastos(data) {

@@ -14,6 +14,7 @@ function readMovements() {
   if (lastRow === 0 || lastCol === 0) {
     sheet.clear();
     sheet.getRange(1, 1, 1, MOVEMENTS_HEADERS.length).setValues([MOVEMENTS_HEADERS]);
+    aplicarFormatoHojaPorNombre(sheet);
     return [];
   }
 
@@ -45,7 +46,7 @@ function writeMovements(rows) {
     sheet.getRange(2, 1, dataRows.length, MOVEMENTS_HEADERS.length).setValues(dataRows);
   }
 
-  aplicarFormatoTablaGenerica(sheet, 2, [4]);
+  aplicarFormatoHojaPorNombre(sheet);
 }
 
 function upsertMovements(rows) {
@@ -73,6 +74,7 @@ function upsertMovements(rows) {
       byId[movementId] = appendRow;
     }
   });
+  aplicarFormatoHojaPorNombre(sheet);
 }
 
 function reconcileMovements(rows) {
@@ -85,7 +87,7 @@ function reconcileMovements(rows) {
   sheet.clearContents();
   sheet.getRange(1, 1, allRows.length, MOVEMENTS_HEADERS.length).setValues(allRows);
 
-  aplicarFormatoTablaGenerica(sheet, 2, [4]);
+  aplicarFormatoHojaPorNombre(sheet);
 }
 
 function deleteMovementsByIds(ids) {
@@ -109,6 +111,7 @@ function deleteMovementsByIds(ids) {
 
   sheet.clear();
   sheet.getRange(1, 1, keepRows.length, MOVEMENTS_HEADERS.length).setValues(keepRows);
+  aplicarFormatoHojaPorNombre(sheet);
 }
 
 function appendMovements(rows) {
@@ -121,12 +124,14 @@ function appendMovements(rows) {
   const dataRows = normalized.map(_movementToSheetRow);
   const startRow = sheet.getLastRow() + 1;
   sheet.getRange(startRow, 1, dataRows.length, MOVEMENTS_HEADERS.length).setValues(dataRows);
+  aplicarFormatoHojaPorNombre(sheet);
 }
 
 function clearMovements() {
   const sheet = _getOrCreateSheet(MOVEMENTS_SHEET_NAME);
   sheet.clear();
   sheet.getRange(1, 1, 1, MOVEMENTS_HEADERS.length).setValues([MOVEMENTS_HEADERS]);
+  aplicarFormatoHojaPorNombre(sheet);
 }
 
 function _normalizeMovementRows(rows, defaultSource) {
@@ -229,6 +234,7 @@ function _ensureMovementsSchema(sheet) {
   const lastCol = sheet.getLastColumn();
   if (lastRow === 0 || lastCol === 0) {
     sheet.getRange(1, 1, 1, MOVEMENTS_HEADERS.length).setValues([MOVEMENTS_HEADERS]);
+    aplicarFormatoHojaPorNombre(sheet);
     return;
   }
   const headers = _normalizeHeaders(sheet.getRange(1, 1, 1, lastCol).getValues()[0] || []);

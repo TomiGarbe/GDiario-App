@@ -175,6 +175,15 @@ class SheetSyncService:
         return job
 
     @staticmethod
+    def delete_job(db: Session, job_id: UUID) -> bool:
+        job = db.get(SheetSyncJob, job_id)
+        if job is None:
+            return False
+        db.delete(job)
+        db.commit()
+        return True
+
+    @staticmethod
     def _load_movement(db: Session, movement_id: UUID) -> Movement | None:
         return db.scalar(
             select(Movement)
