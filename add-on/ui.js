@@ -212,6 +212,7 @@ function buildPreviewSyncCard_(title, preview, confirmFn) {
 
   appendPreviewRows_(section, "Solo en app", preview.only_in_app);
   appendPreviewRows_(section, "Solo en Sheets", preview.only_in_sheet);
+  appendProductPreviewRows_(section, "Cambios en GRASA/HUESOS", preview.product_sheet_differences);
 
   section.addWidget(
     CardService.newTextButton()
@@ -228,6 +229,7 @@ function appendPreviewRows_(section, label, rows) {
     return [
       row.date || "-",
       row.type || "-",
+      row.entity_name || "-",
       row.amount || "0",
       row.description || row.id
     ].join(" | ");
@@ -235,5 +237,30 @@ function appendPreviewRows_(section, label, rows) {
   if ((rows || []).length > 10) {
     lines.push("... y " + ((rows || []).length - 10) + " mas");
   }
-  section.addWidget(CardService.newTextParagraph().setText(label + ":\n" + (lines.join("\n") || "Ninguno")));
+  section.addWidget(CardService.newTextParagraph().setText(
+    label + " (fecha | tipo | cliente/empleado | monto | descripcion):\n" + (lines.join("\n") || "Ninguno")
+  ));
+}
+
+function appendProductPreviewRows_(section, label, rows) {
+  const lines = (rows || []).slice(0, 10).map((row) => {
+    return [
+      row.sheet || "-",
+      row.date || "-",
+      row.entity_name || "-",
+      previewCellText_(row.current_value),
+      "->",
+      previewCellText_(row.app_value)
+    ].join(" | ");
+  });
+  if ((rows || []).length > 10) {
+    lines.push("... y " + ((rows || []).length - 10) + " mas");
+  }
+  section.addWidget(CardService.newTextParagraph().setText(
+    label + " (hoja | fecha | cliente | actual | app):\n" + (lines.join("\n") || "Ninguno")
+  ));
+}
+
+function previewCellText_(value) {
+  return value === null || value === undefined || value === "" ? "vacio" : String(value);
 }

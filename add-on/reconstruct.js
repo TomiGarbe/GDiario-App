@@ -222,6 +222,7 @@ function procesarSueldos(ss) {
 
   const data = sheet.getDataRange().getValues();
   const movements = [];
+  const movementsById = {};
   const salaries = [];
   let processed = 0;
 
@@ -252,13 +253,17 @@ function procesarSueldos(ss) {
       sheet.getRange(i + 1, 6).setValue(id);
     }
 
-    movements.push({
-      id,
-      type: "Sueldo",
-      date: parsedDate,
-      amount,
-      description: concepto || "Sueldo"
-    });
+    if (!movementsById[id]) {
+      movementsById[id] = {
+        id,
+        type: "Sueldo",
+        date: parsedDate,
+        amount: 0,
+        description: concepto || "Sueldo"
+      };
+      movements.push(movementsById[id]);
+    }
+    movementsById[id].amount += amount;
 
     salaries.push({
       movement_id: id,

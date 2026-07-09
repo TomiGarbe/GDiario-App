@@ -171,13 +171,17 @@ function syncOperationalSheetsFromExport(data) {
 function previewSyncSheetToBackend() {
   const sheetPayload = buildCurrentSheetFullPayload_();
   const appExport = getAppExportForCurrentPeriod_();
-  return compareSyncSources_(sheetPayload.movements, appExport.movements || []);
+  const appMovements = enrichAppExportMovementsForPreview_(appExport);
+  return compareSyncSources_(sheetPayload.movements, appMovements);
 }
 
 function previewSyncBackendToSheet() {
   const sheetPayload = buildCurrentSheetFullPayload_();
   const appExport = getAppExportForCurrentPeriod_();
-  return compareSyncSources_(sheetPayload.movements, appExport.movements || []);
+  const appMovements = enrichAppExportMovementsForPreview_(appExport);
+  const preview = compareSyncSources_(sheetPayload.movements, appMovements);
+  appendProductSheetPreviewDifferences_(preview, appExport);
+  return preview;
 }
 
 function getAppExportForCurrentPeriod_() {
@@ -216,16 +220,128 @@ function compareSyncSources_(sheetMovements, appMovements) {
 }
 
 function describeSyncMovement_(id, movement) {
+  const type = String((movement && movement.type) || "");
   return {
     id: id,
     date: String((movement && movement.date) || ""),
-    type: String((movement && movement.type) || ""),
+    type: type,
+    entity_name: syncPreviewEntityName_(movement, type),
     amount: String((movement && movement.amount) || ""),
     description: String((movement && movement.description) || "")
   };
 }
 
+function enrichAppExportMovementsForPreview_(exported) {
+  const movements = Array.isArray(exported && exported.movements) ? exported.movements : [];
+  const movementItems = Array.isArray(exported && exported.movement_items) ? exported.movement_items : [];
+  const movementSalaries = Array.isArray(exported && exported.movement_salaries) ? exported.movement_salaries : [];
+  const movementClientPayments = Array.isArray(exported && exported.movement_client_payments)
+    ? exported.movement_client_payments
+    : [];
+
+  const movementsById = {};
+  const enriched = movements.map((movement) => {
+    const copy = {};
+    Object.keys(movement || {}).forEach((key) => {
+      copy[key] = movement[key];
+    });
+    copy.items = Array.isArray(copy.items) ? copy.items.slice() : [];
+    copy.salaries = Array.isArray(copy.salaries) ? copy.salaries.slice() : [];
+    copy.client_payments = Array.isArray(copy.client_payments) ? copy.client_payments.slice() : [];
+
+    const id = syncPreviewMovementId_(copy);
+    if (id) movementsById[id] = copy;
+    return copy;
+  });
+
+  movementItems.forEach((item) => {
+    const movement = movementsById[String((item && item.movement_id) || "").trim()];
+    if (!movement) return;
+    movement.items.push({
+      client_name: item && item.client_name,
+      product_name: item && item.product_name,
+      quantity: item && item.quantity,
+      unit_price: item && item.unit_price,
+      subtotal: item && item.subtotal
+    });
+  });
+
+  movementSalaries.forEach((salary) => {
+    const movement = movementsById[String((salary && salary.movement_id) || "").trim()];
+    if (!movement) return;
+    movement.salaries.push({
+      employee_name: salary && salary.employee_name,
+      subtotal: salary && salary.subtotal
+    });
+  });
+
+  movementClientPayments.forEach((payment) => {
+    const movement = movementsById[String((payment && payment.movement_id) || "").trim()];
+    if (!movement) return;
+    movement.client_payments.push({
+      client_name: payment && payment.client_name,
+      subtotal: payment && payment.subtotal
+    });
+  });
+
+  return enriched;
+}
+
+function syncPreviewMovementId_(movement) {
+  return String((movement && (movement.external_id || movement.id)) || "").trim();
+}
+
+function syncPreviewEntityName_(movement, type) {
+  const normalizedType = syncLowerTrim_(type);
+  if (normalizedType === "compra" || normalizedType === "venta") {
+    return syncPreviewUniqueNames_(movement && movement.items, (item) => item && (item.client_name || item.client));
+  }
+  if (normalizedType === "pago" || normalizedType === "pago_cliente") {
+    return syncPreviewUniqueNames_(
+      movement && movement.client_payments,
+      (payment) => payment && (payment.client_name || payment.client)
+    );
+  }
+  if (normalizedType === "sueldo") {
+    return syncPreviewUniqueNames_(
+      movement && movement.salaries,
+      (salary) => salary && (salary.employee_name || salary.employee)
+    );
+  }
+  return "";
+}
+
+function syncPreviewUniqueNames_(rows, getter) {
+  const names = [];
+  const seen = {};
+
+  (rows || []).forEach((row) => {
+    const name = syncSheetText_(getter(row));
+    const key = syncUpperNoAccents_(name);
+    if (!name || seen[key]) return;
+    seen[key] = true;
+    names.push(name);
+  });
+
+  if (names.length > 3) {
+    return names.slice(0, 3).join(", ") + " +" + (names.length - 3);
+  }
+  return names.join(", ");
+}
+
 function syncProductSheetFromExport(sheetName, data) {
+  const context = syncBuildProductSheetContext_(sheetName, data);
+  const changedCells = syncApplyProductSheetDifferences_(
+    context.sheet,
+    context.rowMeta,
+    context.dateColumnGroups,
+    context.dateKeyByColumnNumber,
+    context.quantitiesByRowKey
+  );
+  Logger.log("SYNC " + sheetName + " actualizado. Celdas modificadas=" + changedCells);
+}
+
+function syncBuildProductSheetContext_(sheetName, data) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
@@ -239,14 +355,21 @@ function syncProductSheetFromExport(sheetName, data) {
 
   const header = values[0] || [];
   const firstDateColumn = 3;
-  const dateColumnCount = Math.max(0, header.length - 4);
-  const dateColumnIndexByKey = {};
+  const lastCandidateDateColumn = Math.max(firstDateColumn - 1, header.length - 2);
+  const dateColumnNumberByKey = {};
+  const dateKeyByColumnNumber = {};
+  const dateColumnNumbers = [];
 
-  for (let offset = 0; offset < dateColumnCount; offset += 1) {
-    const absoluteColumn = firstDateColumn + offset;
+  for (let absoluteColumn = firstDateColumn; absoluteColumn <= lastCandidateDateColumn; absoluteColumn += 1) {
     const key = syncDateKey_(header[absoluteColumn - 1]);
     if (!key) continue;
-    dateColumnIndexByKey[key] = offset;
+    dateColumnNumberByKey[key] = absoluteColumn;
+    dateKeyByColumnNumber[absoluteColumn] = key;
+    dateColumnNumbers.push(absoluteColumn);
+  }
+
+  if (!dateColumnNumbers.length) {
+    throw new Error("No se encontraron columnas de fecha en " + sheetName);
   }
 
   const rowMeta = [];
@@ -264,7 +387,7 @@ function syncProductSheetFromExport(sheetName, data) {
       cordiezRows += 1;
     }
 
-    const meta = { rowNumber: rowIndex + 1, rowKey: rowKey };
+    const meta = { rowNumber: rowIndex + 1, rowKey: rowKey, label: client };
     rowMeta.push(meta);
     rowMetaByKey[rowKey] = meta;
   }
@@ -279,7 +402,8 @@ function syncProductSheetFromExport(sheetName, data) {
   const missingRows = {};
   const missingDates = {};
 
-  (data.movementItems || []).forEach((item) => {
+  const movementItems = data.movementItems || data.movement_items || [];
+  movementItems.forEach((item) => {
     const movementId = String(item && item.movement_id || "").trim();
     const movement = movementById[movementId];
     if (!movement) return;
@@ -304,7 +428,7 @@ function syncProductSheetFromExport(sheetName, data) {
       missingRows[rowKey] = true;
       return;
     }
-    if (dateColumnIndexByKey[dateKey] === undefined) {
+    if (dateColumnNumberByKey[dateKey] === undefined) {
       missingDates[dateKey] = true;
       return;
     }
@@ -324,17 +448,190 @@ function syncProductSheetFromExport(sheetName, data) {
     );
   }
 
-  rowMeta.forEach((meta) => {
-    const rowValues = new Array(dateColumnCount).fill("");
-    const quantities = quantitiesByRowKey[meta.rowKey] || {};
-    Object.keys(quantities).forEach((dateKey) => {
-      const offset = dateColumnIndexByKey[dateKey];
-      if (offset === undefined) return;
-      rowValues[offset] = quantities[dateKey];
+  return {
+    sheet: sheet,
+    rowMeta: rowMeta,
+    dateColumnGroups: syncContiguousColumnGroups_(dateColumnNumbers),
+    dateKeyByColumnNumber: dateKeyByColumnNumber,
+    quantitiesByRowKey: quantitiesByRowKey
+  };
+}
+
+function syncApplyProductSheetDifferences_(sheet, rowMeta, dateColumnGroups, dateKeyByColumnNumber, quantitiesByRowKey) {
+  if (!rowMeta.length || !dateColumnGroups.length) return 0;
+
+  const minRow = rowMeta.reduce((min, meta) => Math.min(min, meta.rowNumber), rowMeta[0].rowNumber);
+  const maxRow = rowMeta.reduce((max, meta) => Math.max(max, meta.rowNumber), rowMeta[0].rowNumber);
+  const rowCount = maxRow - minRow + 1;
+  let changedCells = 0;
+
+  dateColumnGroups.forEach((group) => {
+    const width = group.end - group.start + 1;
+    const range = sheet.getRange(minRow, group.start, rowCount, width);
+    const currentValues = range.getValues();
+    const formulas = range.getFormulas();
+
+    rowMeta.forEach((meta) => {
+      const localRow = meta.rowNumber - minRow;
+      const quantities = quantitiesByRowKey[meta.rowKey] || {};
+      const changedColumns = [];
+
+      for (let column = group.start; column <= group.end; column += 1) {
+        const offset = column - group.start;
+        const formula = formulas[localRow] && formulas[localRow][offset];
+        if (formula) continue;
+
+        const dateKey = dateKeyByColumnNumber[column];
+        const desiredValue = Object.prototype.hasOwnProperty.call(quantities, dateKey) ? quantities[dateKey] : "";
+        const currentValue = currentValues[localRow] ? currentValues[localRow][offset] : "";
+
+        if (!syncCellValuesEqual_(currentValue, desiredValue)) {
+          changedColumns.push({ column: column, value: desiredValue });
+        }
+      }
+
+      syncContiguousValueGroups_(changedColumns).forEach((changedGroup) => {
+        sheet
+          .getRange(meta.rowNumber, changedGroup.start, 1, changedGroup.values.length)
+          .setValues([changedGroup.values]);
+        changedCells += changedGroup.values.length;
+      });
     });
-    sheet.getRange(meta.rowNumber, firstDateColumn, 1, dateColumnCount).setValues([rowValues]);
   });
-  aplicarFormatoHojaPorNombre(sheet);
+
+  return changedCells;
+}
+
+function appendProductSheetPreviewDifferences_(preview, appExport) {
+  const productDifferences = [];
+
+  ["GRASA", "HUESOS"].forEach((sheetName) => {
+    if (productDifferences.length >= 30) return;
+    const context = syncBuildProductSheetContext_(sheetName, appExport);
+    Array.prototype.push.apply(
+      productDifferences,
+      syncCollectProductSheetDifferences_(sheetName, context, 30 - productDifferences.length)
+    );
+  });
+
+  preview.product_sheet_differences = productDifferences;
+  preview.has_differences = preview.has_differences || productDifferences.length > 0;
+}
+
+function syncCollectProductSheetDifferences_(sheetName, context, remainingLimit) {
+  if (!context || !context.rowMeta.length || !context.dateColumnGroups.length || remainingLimit <= 0) return [];
+
+  const sheet = context.sheet;
+  const rowMeta = context.rowMeta;
+  const minRow = rowMeta.reduce((min, meta) => Math.min(min, meta.rowNumber), rowMeta[0].rowNumber);
+  const maxRow = rowMeta.reduce((max, meta) => Math.max(max, meta.rowNumber), rowMeta[0].rowNumber);
+  const rowCount = maxRow - minRow + 1;
+  const differences = [];
+
+  context.dateColumnGroups.forEach((group) => {
+    if (differences.length >= remainingLimit) return;
+
+    const width = group.end - group.start + 1;
+    const range = sheet.getRange(minRow, group.start, rowCount, width);
+    const currentValues = range.getValues();
+    const formulas = range.getFormulas();
+
+    rowMeta.forEach((meta) => {
+      if (differences.length >= remainingLimit) return;
+
+      const localRow = meta.rowNumber - minRow;
+      const quantities = context.quantitiesByRowKey[meta.rowKey] || {};
+
+      for (let column = group.start; column <= group.end; column += 1) {
+        if (differences.length >= remainingLimit) break;
+
+        const offset = column - group.start;
+        const formula = formulas[localRow] && formulas[localRow][offset];
+        if (formula) continue;
+
+        const dateKey = context.dateKeyByColumnNumber[column];
+        const desiredValue = Object.prototype.hasOwnProperty.call(quantities, dateKey) ? quantities[dateKey] : "";
+        const currentValue = currentValues[localRow] ? currentValues[localRow][offset] : "";
+
+        if (!syncCellValuesEqual_(currentValue, desiredValue)) {
+          differences.push({
+            sheet: sheetName,
+            date: dateKey,
+            entity_name: syncProductPreviewLabel_(sheetName, meta),
+            current_value: syncPreviewCellValue_(currentValue),
+            app_value: syncPreviewCellValue_(desiredValue)
+          });
+        }
+      }
+    });
+  });
+
+  return differences;
+}
+
+function syncProductPreviewLabel_(sheetName, meta) {
+  if (sheetName === "HUESOS" && meta && String(meta.rowKey || "").indexOf("|") !== -1) {
+    return String(meta.label || "") + " " + String(meta.rowKey).split("|")[1];
+  }
+  return String((meta && meta.label) || "");
+}
+
+function syncPreviewCellValue_(value) {
+  if (syncIsBlankCell_(value)) return "";
+  const number = syncNumber_(value);
+  return number === null ? String(value) : String(number);
+}
+
+function syncContiguousColumnGroups_(columnNumbers) {
+  const sorted = (columnNumbers || []).slice().sort((a, b) => a - b);
+  const groups = [];
+
+  sorted.forEach((column) => {
+    const last = groups[groups.length - 1];
+    if (last && column === last.end + 1) {
+      last.end = column;
+      return;
+    }
+    groups.push({ start: column, end: column });
+  });
+
+  return groups;
+}
+
+function syncContiguousValueGroups_(changes) {
+  const groups = [];
+
+  (changes || []).forEach((change) => {
+    const last = groups[groups.length - 1];
+    if (last && change.column === last.end + 1) {
+      last.end = change.column;
+      last.values.push(change.value);
+      return;
+    }
+    groups.push({
+      start: change.column,
+      end: change.column,
+      values: [change.value]
+    });
+  });
+
+  return groups;
+}
+
+function syncCellValuesEqual_(currentValue, desiredValue) {
+  if (syncIsBlankCell_(currentValue) && syncIsBlankCell_(desiredValue)) return true;
+
+  const currentNumber = syncNumber_(currentValue);
+  const desiredNumber = syncNumber_(desiredValue);
+  if (currentNumber !== null && desiredNumber !== null) {
+    return Math.abs(currentNumber - desiredNumber) < 0.000001;
+  }
+
+  return String(currentValue == null ? "" : currentValue).trim() === String(desiredValue == null ? "" : desiredValue).trim();
+}
+
+function syncIsBlankCell_(value) {
+  return value === null || value === undefined || value === "";
 }
 
 function syncCuentasFromExport(data) {
