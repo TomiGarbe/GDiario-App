@@ -33,8 +33,17 @@ router = APIRouter(
 )
 
 
+def _reject_sheet_as_source() -> None:
+    """The App DB is authoritative; these former import endpoints are retired."""
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Google Sheets is a read-only projection. Changes must be made through the App.",
+    )
+
+
 @router.post("/clients", response_model=SyncClientsResponse, status_code=status.HTTP_200_OK)
 def sync_clients(data: SyncClientsRequest, db: Session = Depends(get_db)) -> SyncClientsResponse:
+    _reject_sheet_as_source()
     try:
         names = [item.name for item in data.clients]
         with db.begin():
@@ -48,6 +57,7 @@ def sync_clients(data: SyncClientsRequest, db: Session = Depends(get_db)) -> Syn
 
 @router.post("/products", response_model=SyncProductsResponse, status_code=status.HTTP_200_OK)
 def sync_products(data: SyncProductsRequest, db: Session = Depends(get_db)) -> SyncProductsResponse:
+    _reject_sheet_as_source()
     try:
         names = [item.name for item in data.products]
         with db.begin():
@@ -61,6 +71,7 @@ def sync_products(data: SyncProductsRequest, db: Session = Depends(get_db)) -> S
 
 @router.post("/prices", response_model=SyncPricesResponse, status_code=status.HTTP_200_OK)
 def sync_prices(data: SyncPricesRequest, db: Session = Depends(get_db)) -> SyncPricesResponse:
+    _reject_sheet_as_source()
     try:
         with db.begin():
             received, upserted = SyncService.upsert_prices(db=db, prices=data.prices)
@@ -73,6 +84,7 @@ def sync_prices(data: SyncPricesRequest, db: Session = Depends(get_db)) -> SyncP
 
 @router.post("/movements", response_model=SyncBatchResult, status_code=status.HTTP_200_OK)
 def sync_movements(data: list[MovementSyncPayload], db: Session = Depends(get_db)) -> SyncBatchResult:
+    _reject_sheet_as_source()
     try:
         with db.begin():
             received, inserted, updated = SyncService.sync_movements(db=db, movements=data)
@@ -85,6 +97,7 @@ def sync_movements(data: list[MovementSyncPayload], db: Session = Depends(get_db
 
 @router.post("/movement-items", response_model=SyncBatchResult, status_code=status.HTTP_200_OK)
 def sync_movement_items(data: list[MovementItemSyncPayload], db: Session = Depends(get_db)) -> SyncBatchResult:
+    _reject_sheet_as_source()
     try:
         with db.begin():
             received, inserted, deleted = SyncService.sync_movement_items(db=db, items=data)
@@ -97,6 +110,7 @@ def sync_movement_items(data: list[MovementItemSyncPayload], db: Session = Depen
 
 @router.post("/movement-salaries", response_model=SyncBatchResult, status_code=status.HTTP_200_OK)
 def sync_movement_salaries(data: list[MovementSalarySyncPayload], db: Session = Depends(get_db)) -> SyncBatchResult:
+    _reject_sheet_as_source()
     try:
         with db.begin():
             received, inserted, deleted = SyncService.sync_movement_salaries(db=db, salaries=data)
@@ -109,6 +123,7 @@ def sync_movement_salaries(data: list[MovementSalarySyncPayload], db: Session = 
 
 @router.post("/movement-client-payments", response_model=SyncBatchResult, status_code=status.HTTP_200_OK)
 def sync_movement_client_payments(data: list[MovementClientPaymentSyncPayload], db: Session = Depends(get_db)) -> SyncBatchResult:
+    _reject_sheet_as_source()
     try:
         with db.begin():
             received, inserted, deleted = SyncService.sync_movement_client_payments(db=db, client_payments=data)
@@ -121,6 +136,7 @@ def sync_movement_client_payments(data: list[MovementClientPaymentSyncPayload], 
 
 @router.post("/full", response_model=SyncFullResponse, status_code=status.HTTP_200_OK)
 def sync_full(data: SyncFullRequest, db: Session = Depends(get_db)) -> SyncFullResponse:
+    _reject_sheet_as_source()
     try:
         with db.begin():
             result = SyncService.sync_full(
@@ -150,6 +166,7 @@ def get_sync_full(period_id: int, db: Session = Depends(get_db)) -> SyncFullExpo
 
 @router.post("/mirror", response_model=SyncMirrorResponse, status_code=status.HTTP_200_OK)
 def sync_mirror(data: SyncMirrorRequest, db: Session = Depends(get_db)) -> SyncMirrorResponse:
+    _reject_sheet_as_source()
     try:
         with db.begin():
             result = SyncService.sync_mirror(

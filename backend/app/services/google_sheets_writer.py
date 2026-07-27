@@ -12,7 +12,9 @@ from uuid import UUID
 from sqlalchemy import func, select
 
 from google.oauth2 import service_account
+from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
+import httplib2
 
 from app.core.db import SessionLocal
 from app.core.config import get_settings
@@ -65,25 +67,15 @@ def get_google_credentials():
     settings = get_settings()
     raw = settings.google_credentials_json
 
-    print("==== GOOGLE CREDS DEBUG ====")
-    print("TYPE:", type(raw))
-    print("LENGTH:", len(raw) if raw else 0)
-    print("START:", raw[:200] if raw else None)
-    print("============================")
-
     if not raw:
         raise RuntimeError("GOOGLE_CREDENTIALS_JSON vacio")
 
     try:
         creds_dict = json.loads(raw)
-        print("JSON OK (directo)")
     except Exception as exc:
-        print("JSON ERROR (directo):", str(exc))
         try:
             creds_dict = json.loads(json.loads(raw))
-            print("JSON OK (doble parseo)")
         except Exception as exc2:
-            print("JSON ERROR (doble):", str(exc2))
             raise RuntimeError("Invalid GOOGLE_CREDENTIALS_JSON") from exc2
 
     return service_account.Credentials.from_service_account_info(
@@ -95,7 +87,9 @@ def get_google_credentials():
 @lru_cache(maxsize=1)
 def get_sheets_service():
     credentials = get_google_credentials()
-    return build("sheets", "v4", credentials=credentials)
+    settings = get_settings()
+    http = AuthorizedHttp(credentials, http=httplib2.Http(timeout=settings.sheets_timeout_seconds))
+    return build("sheets", "v4", http=http, cache_discovery=False)
 
 
 def _format_sheet_rows(
@@ -667,19 +661,17 @@ def delete_movement_from_sheets(
     sheet_id: str,
     movement_id: str,
     recalculate_product_cells: set[tuple[date, str, str]] | None = None,
+    recalculate_period_id: int | None = None,
 ) -> None:
     service = get_sheets_service()
 
     for sheet_name in DELETE_MOVEMENT_SHEETS:
-        try:
-            id_col = MOVEMENT_ID_COLUMN_BY_SHEET.get(sheet_name, 0)
-            rows = find_rows_by_movement_id(service, sheet_id, sheet_name, movement_id, id_col)
-            delete_rows(service, sheet_id, sheet_name, rows)
-        except Exception as exc:
-            print(f"[SHEETS DELETE SKIP] sheet={sheet_name} movement_id={movement_id} error={exc}")
+        id_col = MOVEMENT_ID_COLUMN_BY_SHEET.get(sheet_name, 0)
+        rows = find_rows_by_movement_id(service, sheet_id, sheet_name, movement_id, id_col)
+        delete_rows(service, sheet_id, sheet_name, rows)
 
     touched = recalculate_product_cells or _load_product_cells_for_movement(UUID(movement_id))
-    period_id = _load_period_id_for_movement(UUID(movement_id))
+    period_id = recalculate_period_id or _load_period_id_for_movement(UUID(movement_id))
     if period_id is None:
         return
     for movement_date, client_name, product_name in touched:

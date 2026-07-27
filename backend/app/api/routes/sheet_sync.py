@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,20 +31,25 @@ class SheetSyncJobOut(BaseModel):
     attempts: int
     max_attempts: int
     next_retry_at: datetime | None
+    processing_started_at: datetime | None
     last_error: str | None
+    error_stack_trace: str | None
+    error_http_status: int | None
+    error_http_response: str | None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
-    movement_date: str | None = None
+    movement_date: date | None = None
     movement_type: str | None = None
+    company_name: str | None = None
     movement_amount: str | None = None
     movement_description: str | None = None
+    client_names: str | None = None
+    employee_names: str | None = None
 
 
-class ProcessDueOut(BaseModel):
-    processed: int
-    succeeded: int
-    failed: int
+class RetryAllOut(BaseModel):
+    requeued: int
 
 
 def _enum_text(value) -> str:
@@ -64,14 +69,21 @@ def _job_out(row: tuple[SheetSyncJob, Movement | None]) -> SheetSyncJobOut:
         attempts=job.attempts,
         max_attempts=job.max_attempts,
         next_retry_at=job.next_retry_at,
+        processing_started_at=job.processing_started_at,
         last_error=job.last_error,
+        error_stack_trace=job.error_stack_trace,
+        error_http_status=job.error_http_status,
+        error_http_response=job.error_http_response,
         created_at=job.created_at,
         updated_at=job.updated_at,
         completed_at=job.completed_at,
-        movement_date=str(movement.date) if movement is not None and movement.date is not None else None,
-        movement_type=_enum_text(movement.type) if movement is not None and movement.type is not None else None,
-        movement_amount=str(movement.amount) if movement is not None and movement.amount is not None else None,
-        movement_description=movement.description if movement is not None else None,
+        movement_date=job.movement_date or (movement.date if movement is not None else None),
+        movement_type=job.movement_type or (_enum_text(movement.type) if movement is not None else None),
+        company_name=job.company_name,
+        movement_amount=str(movement.amount) if movement is not None else None,
+        movement_description=job.movement_description or (movement.description if movement is not None else None),
+        client_names=job.client_names,
+        employee_names=job.employee_names,
     )
 
 
@@ -91,18 +103,16 @@ def list_sheet_sync_jobs(
         try:
             status_value = SheetSyncStatus(str(status_filter).strip().lower())
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status") from exc
+            raise HTTPException(status_code=400, detail="Invalid status") from exc
         stmt = stmt.where(SheetSyncJob.status == status_value)
-    rows = db.execute(stmt).all()
-    return [_job_out(row) for row in rows]
+    return [_job_out(row) for row in db.execute(stmt).all()]
 
 
 @router.post("/jobs/{job_id}/retry", response_model=SheetSyncJobOut)
 def retry_sheet_sync_job(job_id: UUID, db: Session = Depends(get_db)) -> SheetSyncJobOut:
     job = SheetSyncService.reset_for_retry(db, job_id)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sheet sync job not found")
-    SheetSyncService.process_job(db, job_id)
+        raise HTTPException(status_code=409, detail="Job not found or is already processing")
     row = db.execute(
         select(SheetSyncJob, Movement)
         .join(Movement, Movement.id == SheetSyncJob.movement_id, isouter=True)
@@ -111,17 +121,8 @@ def retry_sheet_sync_job(job_id: UUID, db: Session = Depends(get_db)) -> SheetSy
     return _job_out(row)
 
 
-@router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_sheet_sync_job(job_id: UUID, db: Session = Depends(get_db)) -> None:
-    deleted = SheetSyncService.delete_job(db, job_id)
-    if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sheet sync job not found")
-
-
-@router.post("/process-due", response_model=ProcessDueOut)
-def process_due_sheet_sync_jobs(
-    limit: int = Query(default=25, ge=1, le=100),
-    db: Session = Depends(get_db),
-) -> ProcessDueOut:
-    result = SheetSyncService.process_due(db, limit=limit)
-    return ProcessDueOut(**result)
+@router.post("/jobs/retry-all", response_model=RetryAllOut)
+def retry_all_sheet_sync_jobs(db: Session = Depends(get_db)) -> RetryAllOut:
+    # The background worker will pick these up.  This endpoint never performs
+    # Google I/O and therefore never blocks an administrator's request.
+    return RetryAllOut(requeued=SheetSyncService.requeue_all(db))

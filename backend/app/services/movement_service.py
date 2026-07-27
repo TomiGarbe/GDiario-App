@@ -170,24 +170,21 @@ class MovementService:
         db.flush()
 
         MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
-        db.commit()
+        db.flush()
+        db.expire(movement, ["items", "salaries", "client_payments"])
         movement = MovementService.get_movement_by_id(db, movement.id)
 
         sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
         if sheet_id:
-            try:
-                SheetSyncService.enqueue_and_try_isolated(
-                    movement_id=movement.id,
-                    period_id=movement.period_id,
-                    sheet_id=sheet_id,
-                    action=SheetSyncAction.CREATE,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to enqueue movement Google Sheets sync. movement_id=%s period_id=%s",
-                    movement.id,
-                    movement.period_id,
-                )
+            SheetSyncService.enqueue(
+                db,
+                movement=movement,
+                sheet_id=sheet_id,
+                action=SheetSyncAction.CREATE,
+            )
+        # The movement and its durable outbox row commit atomically.  Sheets is
+        # deliberately not contacted on this request.
+        db.commit()
 
         return movement
 
@@ -227,44 +224,37 @@ class MovementService:
         movement.deleted_at = None
 
         MovementService.replace_details(db, movement.id, movement_type, items, salaries, client_payments)
-        db.commit()
+        db.flush()
+        db.expire(movement, ["items", "salaries", "client_payments"])
         movement = MovementService.get_movement_by_id(db, movement.id)
 
         previous_sheet_id = MovementService._get_sheet_id_for_period_id(db, previous_period_id)
         new_sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
         if previous_sheet_id and previous_sheet_id != new_sheet_id:
-            try:
-                SheetSyncService.enqueue_and_try_isolated(
-                    movement_id=movement.id,
-                    period_id=previous_period_id,
-                    sheet_id=previous_sheet_id,
-                    action=SheetSyncAction.DELETE,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to enqueue previous Google Sheet delete on update. movement_id=%s period_id=%s",
-                    movement.id,
-                    previous_period_id,
-                )
+            SheetSyncService.enqueue(
+                db,
+                movement=movement,
+                period_id=previous_period_id,
+                sheet_id=previous_sheet_id,
+                action=SheetSyncAction.DELETE,
+                payload={
+                    "previous_product_cells": MovementService._serialize_product_cells(previous_product_cells),
+                    "recalculate_period_id": previous_period_id,
+                },
+            )
         if new_sheet_id:
-            try:
-                SheetSyncService.enqueue_and_try_isolated(
-                    movement_id=movement.id,
-                    period_id=movement.period_id,
-                    sheet_id=new_sheet_id,
-                    action=SheetSyncAction.UPDATE,
-                    payload={
-                        "previous_product_cells": MovementService._serialize_product_cells(previous_product_cells)
-                        if previous_sheet_id == new_sheet_id
-                        else [],
-                    },
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to enqueue movement Google Sheets update. movement_id=%s period_id=%s",
-                    movement.id,
-                    movement.period_id,
-                )
+            SheetSyncService.enqueue(
+                db,
+                movement=movement,
+                sheet_id=new_sheet_id,
+                action=SheetSyncAction.UPDATE,
+                payload={
+                    "previous_product_cells": MovementService._serialize_product_cells(previous_product_cells)
+                    if previous_sheet_id == new_sheet_id
+                    else [],
+                },
+            )
+        db.commit()
 
         return movement
 
@@ -276,6 +266,8 @@ class MovementService:
             .options(
                 selectinload(Movement.items).selectinload(MovementItem.client),
                 selectinload(Movement.items).selectinload(MovementItem.product),
+                selectinload(Movement.salaries).selectinload(MovementSalary.employee),
+                selectinload(Movement.client_payments).selectinload(MovementClientPayment.client),
             )
         )
         if movement is None:
@@ -285,24 +277,20 @@ class MovementService:
         movement.deleted_at = datetime.now(timezone.utc)
         movement.updated_at = movement.deleted_at
         movement.source = MovementService._resolve_source(movement.type)
-        db.commit()
-
         sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
         if sheet_id:
-            try:
-                SheetSyncService.enqueue_and_try_isolated(
-                    movement_id=movement_id,
-                    period_id=period_id,
-                    sheet_id=sheet_id,
-                    action=SheetSyncAction.DELETE,
-                    payload={"previous_product_cells": MovementService._serialize_product_cells(product_cells)},
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to enqueue movement Google Sheets delete. movement_id=%s period_id=%s",
-                    movement_id,
-                    period_id,
-                )
+            SheetSyncService.enqueue(
+                db,
+                movement=movement,
+                period_id=period_id,
+                sheet_id=sheet_id,
+                action=SheetSyncAction.DELETE,
+                payload={
+                    "previous_product_cells": MovementService._serialize_product_cells(product_cells),
+                    "recalculate_period_id": period_id,
+                },
+            )
+        db.commit()
 
     @staticmethod
     def replace_details(

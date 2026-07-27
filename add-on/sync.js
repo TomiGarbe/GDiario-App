@@ -1,5 +1,6 @@
 const API_URL = "https://gdiario.azurewebsites.net/api";
-const SYNC_API_KEY = "uLqPsLNQkdVJ3RlpJRMGJq6ePfSTFalLk-wH5j_tEUY";
+// Configure once in Apps Script Properties as SYNC_API_KEY. Never commit it.
+const SYNC_API_KEY = PropertiesService.getScriptProperties().getProperty("SYNC_API_KEY");
 
 const MOVEMENT_TYPE_TO_BACKEND = {
   "compra": "compra",
@@ -17,25 +18,13 @@ const MOVEMENT_TYPE_TO_BACKEND = {
 };
 
 function syncToBackend() {
-  return syncMovementsToBackend();
+  // The App database is authoritative. "Sync" from the spreadsheet now means
+  // refresh this projection from the App; it must never import sheet edits.
+  return syncFromBackendToSheet();
 }
 
 function syncMovementsToBackend() {
-  try {
-    Logger.log("SYNC movimientos iniciado");
-
-    const payloadFull = buildCurrentSheetFullPayload_();
-
-    const fullResponse = sendToBackend("/sync/full", payloadFull);
-    Logger.log("Sync movements OK");
-
-    Logger.log("SYNC movimientos finalizado");
-    Logger.log("/sync/full response: " + fullResponse);
-    return fullResponse;
-  } catch (error) {
-    Logger.log("SYNC movimientos error: " + error.message);
-    throw error;
-  }
+  return syncFromBackendToSheet();
 }
 
 function buildCurrentSheetFullPayload_() {
@@ -55,41 +44,8 @@ function buildCurrentSheetFullPayload_() {
 }
 
 function syncCatalogToBackend() {
-  try {
-    Logger.log("SYNC catalogo iniciado");
-
-    const pricesRows = getSheetData("PRECIOS");
-
-    const payloadPrices = buildPrices(pricesRows);
-    const payloadClients = buildClients(pricesRows);
-    const payloadProducts = buildProducts(pricesRows);
-
-    validateClientsPayload(payloadClients);
-    validateProductsPayload(payloadProducts);
-    validatePricesPayload(payloadPrices);
-
-    const clientsResponse = sendClients(payloadClients);
-    Logger.log("Sync clients OK");
-
-    const productsResponse = sendProducts(payloadProducts);
-    Logger.log("Sync products OK");
-
-    const pricesResponse = sendToBackend("/sync/prices", payloadPrices);
-    Logger.log("Sync prices OK");
-
-    Logger.log("SYNC catalogo finalizado");
-    Logger.log("/sync/clients response: " + clientsResponse);
-    Logger.log("/sync/products response: " + productsResponse);
-    Logger.log("/sync/prices response: " + pricesResponse);
-    return {
-      clients: clientsResponse,
-      products: productsResponse,
-      prices: pricesResponse
-    };
-  } catch (error) {
-    Logger.log("SYNC catalogo error: " + error.message);
-    throw error;
-  }
+  Logger.log("SYNC catálogo omitido: la App es la fuente de verdad");
+  return { skipped: true, reason: "APP_IS_SOURCE_OF_TRUTH" };
 }
 
 function syncFromBackendToSheet() {
@@ -1186,6 +1142,9 @@ function getFromBackend(path) {
 }
 
 function requestBackend(method, path, payload) {
+  if (!SYNC_API_KEY) {
+    throw new Error("Falta configurar SYNC_API_KEY en Script Properties");
+  }
   const options = {
     method: method,
     contentType: "application/json",

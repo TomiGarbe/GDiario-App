@@ -43,7 +43,6 @@ function renderAdminSheetErrors(rows) {
       '    <div class="mov-monto ' + tone + '">' + escapeHtmlAdmin_(amount) + '</div>',
       '    <div class="mov-item-actions">',
       '      <button type="button" class="mov-act mov-act-edit" data-admin-action="retry" data-id="' + escapeHtmlAdmin_(id) + '" title="Reintentar" aria-label="Reintentar">' + iconRetryAdmin_() + '</button>',
-      '      <button type="button" class="mov-act mov-act-del" data-admin-action="delete" data-id="' + escapeHtmlAdmin_(id) + '" title="Eliminar error" aria-label="Eliminar error">' + iconDeleteAdmin_() + '</button>',
       '    </div>',
       '  </div>',
       '  <div class="mov-main">',
@@ -74,7 +73,7 @@ function cargarErroresSheetsAdmin() {
     .then(function(rows) {
       var filtered = (Array.isArray(rows) ? rows : []).filter(function(job) {
         var status = String(job && job.status || '').toLowerCase();
-        return status === 'failed' || status === 'pending';
+        return status === 'pending' || status === 'processing' || status === 'temporary_error' || status === 'definitive_error';
       });
       renderAdminSheetErrors(filtered);
     })
@@ -94,11 +93,11 @@ function procesarPendientesSheetsAdmin() {
   }
 
   var btn = document.getElementById('btnAdminProcess');
-  if (typeof setBotonLoading === 'function') setBotonLoading(btn, true, 'Procesando...');
+  if (typeof setBotonLoading === 'function') setBotonLoading(btn, true, 'Reencolando...');
 
-  return request('/admin/sheet-sync/process-due', { method: 'POST' })
+  return request('/admin/sheet-sync/jobs/retry-all', { method: 'POST' })
     .then(function(result) {
-      showToast('Procesados: ' + (result && result.processed || 0), 'success');
+      showToast('Reencolados: ' + (result && result.requeued || 0), 'success');
       return cargarErroresSheetsAdmin();
     })
     .catch(function(err) {
@@ -124,54 +123,6 @@ function reintentarSheetJobAdmin(jobId) {
       showToast('No se pudo reintentar', 'error');
       throw err;
     });
-}
-
-function eliminarSheetJobAdmin(jobId) {
-  var id = String(jobId || '').trim();
-  if (!id) return Promise.resolve();
-
-  return request('/admin/sheet-sync/jobs/' + encodeURIComponent(id), { method: 'DELETE' })
-    .then(function() {
-      showToast('Error eliminado de la lista', 'success');
-      return cargarErroresSheetsAdmin();
-    })
-    .catch(function(err) {
-      console.error('Error eliminando Sheets job:', err);
-      showToast('No se pudo eliminar el error', 'error');
-      throw err;
-    });
-}
-
-function confirmarEliminarSheetJobAdmin(jobId) {
-  var id = String(jobId || '').trim();
-  if (!id) return;
-
-  if (typeof abrirConfirmacion === 'function') {
-    abrirConfirmacion({
-      title: 'Eliminar error',
-      message: 'Seguro que quieres eliminar este error de la lista?',
-      confirmLabel: 'Eliminar',
-      onConfirm: function(btnConfirmar, btnCancelar) {
-        btnCancelar.disabled = true;
-        ejecutarConLoading(function() {
-          return eliminarSheetJobAdmin(id);
-        }, {
-          boton: btnConfirmar,
-          textoBoton: 'Eliminando...',
-          textoGlobal: 'Eliminando error...'
-        }).then(function() {
-          cerrarModalActual();
-        }).catch(function() {
-          btnCancelar.disabled = false;
-        });
-      }
-    });
-    return;
-  }
-
-  if (window.confirm('Seguro que quieres eliminar este error de la lista?')) {
-    eliminarSheetJobAdmin(id).catch(function() {});
-  }
 }
 
 function abrirDetalleSheetJobAdmin(jobId) {
@@ -215,10 +166,16 @@ function abrirDetalleSheetJobAdmin(jobId) {
         filaDetalleAdmin_('Intentos', String(job.attempts || 0) + '/' + String(job.max_attempts || 0)),
         filaDetalleAdmin_('Proximo reintento', formatAdminValue_(job.next_retry_at)),
         filaDetalleAdmin_('Movimiento', formatAdminValue_(job.movement_id)),
+        filaDetalleAdmin_('Empresa', formatAdminValue_(job.company_name)),
         filaDetalleAdmin_('Periodo', formatAdminValue_(job.period_id)),
         filaDetalleAdmin_('Sheet', formatAdminValue_(job.sheet_id)),
         filaDetalleAdmin_('Descripcion', formatAdminValue_(job.movement_description)),
-        filaDetalleAdmin_('Error', formatAdminValue_(job.last_error || 'Pendiente sin error registrado'), true)
+        filaDetalleAdmin_('Clientes', formatAdminValue_(job.client_names)),
+        filaDetalleAdmin_('Empleados', formatAdminValue_(job.employee_names)),
+        filaDetalleAdmin_('HTTP', formatAdminValue_(job.error_http_status)),
+        filaDetalleAdmin_('Respuesta HTTP', formatAdminValue_(job.error_http_response), true),
+        filaDetalleAdmin_('Error', formatAdminValue_(job.last_error || 'Pendiente sin error registrado'), true),
+        filaDetalleAdmin_('Stack trace', formatAdminValue_(job.error_stack_trace), true)
       ].join('');
       body.appendChild(details);
 
@@ -226,12 +183,10 @@ function abrirDetalleSheetJobAdmin(jobId) {
       actions.className = 'modal-actions';
       actions.innerHTML = [
         '<button type="button" class="btn btn-outline" id="adminRetryJobModal"><div class="spin"></div><span class="lbl">Reintentar</span></button>',
-        '<button type="button" class="btn btn-danger-solid" id="adminDeleteJobModal"><div class="spin"></div><span class="lbl">Eliminar</span></button>'
       ].join('');
       body.appendChild(actions);
 
       var btnRetry = actions.querySelector('#adminRetryJobModal');
-      var btnDelete = actions.querySelector('#adminDeleteJobModal');
       btnRetry.addEventListener('click', function() {
         ejecutarConLoading(function() {
           return reintentarSheetJobAdmin(id);
@@ -239,17 +194,6 @@ function abrirDetalleSheetJobAdmin(jobId) {
           boton: btnRetry,
           textoBoton: 'Reintentando...',
           textoGlobal: 'Reintentando sincronizacion...'
-        }).then(function() {
-          cerrarModalActual();
-        }).catch(function() {});
-      });
-      btnDelete.addEventListener('click', function() {
-        ejecutarConLoading(function() {
-          return eliminarSheetJobAdmin(id);
-        }, {
-          boton: btnDelete,
-          textoBoton: 'Eliminando...',
-          textoGlobal: 'Eliminando error...'
         }).then(function() {
           cerrarModalActual();
         }).catch(function() {});
@@ -277,25 +221,24 @@ function bindAdminSheetErrors_() {
         reintentarSheetJobAdmin(id).catch(function() {});
         return;
       }
-      if (action === 'delete') {
-        confirmarEliminarSheetJobAdmin(id);
-      }
     });
   });
 }
 
 function tonoSheetJobAdmin_(job) {
   var status = String(job && job.status || '').toLowerCase();
-  if (status === 'failed') return 'egreso';
-  if (status === 'succeeded') return 'ingreso';
+  if (status === 'temporary_error' || status === 'definitive_error') return 'egreso';
+  if (status === 'synced') return 'ingreso';
   return 'neutro';
 }
 
 function textoEstadoSheetJobAdmin_(job) {
   var status = String(job && job.status || '').toLowerCase();
-  if (status === 'failed') return 'Fallido';
+  if (status === 'temporary_error') return 'Error temporal';
+  if (status === 'definitive_error') return 'Error definitivo';
+  if (status === 'processing') return 'Procesando';
   if (status === 'pending') return 'Pendiente';
-  if (status === 'succeeded') return 'Completado';
+  if (status === 'synced') return 'Sincronizado';
   return status || 'Sin estado';
 }
 
@@ -367,5 +310,4 @@ window.actualizarAdminVisible = actualizarAdminVisible;
 window.cargarErroresSheetsAdmin = cargarErroresSheetsAdmin;
 window.procesarPendientesSheetsAdmin = procesarPendientesSheetsAdmin;
 window.reintentarSheetJobAdmin = reintentarSheetJobAdmin;
-window.eliminarSheetJobAdmin = eliminarSheetJobAdmin;
 window.abrirDetalleSheetJobAdmin = abrirDetalleSheetJobAdmin;

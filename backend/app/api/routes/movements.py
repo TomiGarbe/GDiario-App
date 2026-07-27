@@ -50,6 +50,7 @@ def _to_movement_out(movement: Movement) -> MovementOut:
         description=movement.description,
         updated_at=movement.updated_at,
         source=movement.source,
+        sheet_sync_status=movement.sheet_sync_status,
         items=[
             MovementItemOut(
                 client=item.client.name,

@@ -31,6 +31,7 @@ export interface Movement {
   type: MovementKind;
   amount: string;
   description: string | null;
+  sheet_sync_status: "pending" | "processing" | "synced" | "temporary_error" | "definitive_error";
   items: MovementItem[];
   salaries: MovementSalary[];
   client_payments: MovementClientPayment[];
