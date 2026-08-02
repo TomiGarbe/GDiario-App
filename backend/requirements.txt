@@ -13,3 +13,4 @@ requests>=2.0.0
 gunicorn
 pytest
 httpx
+psutil

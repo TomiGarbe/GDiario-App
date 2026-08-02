@@ -8,14 +8,15 @@ from __future__ import annotations
 import json
 import logging
 import traceback
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from googleapiclient.errors import HttpError
-from sqlalchemy import or_, select, text, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, engine
 from app.core.config import get_settings
 from app.models.movement import Movement
 from app.models.movement_client_payment import MovementClientPayment
@@ -141,48 +142,78 @@ class SheetSyncService:
         if job is None or job.status != SheetSyncStatus.PROCESSING:
             return False
         now = datetime.now(timezone.utc)
-        if not SheetSyncService._try_lock_movement(db, job.movement_id):
-            # Another worker is already projecting this movement. This is not a
-            # Sheets failure and must not consume one of the six attempts.
-            job.status = SheetSyncStatus.PENDING
-            job.attempts = max(0, int(job.attempts or 0) - 1)
-            job.processing_started_at = None
-            job.next_retry_at = now + timedelta(seconds=5)
-            job.updated_at = now
-            SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
-            db.commit()
-            return False
-        try:
-            if not SheetSyncService._is_job_current(db, job):
-                # An edit may move a movement away and then back to the same
-                # sheet while an older delete is waiting.  Never let that old
-                # intent overwrite the newest state from the App.
-                job.status = SheetSyncStatus.SYNCED
-                job.completed_at = now
-                job.next_retry_at = None
+        with SheetSyncService._projection_lock(job.movement_id) as acquired:
+            if not acquired:
+                # Another process is projecting this movement. This is not a
+                # Sheets failure and must not consume one of the six attempts.
+                job.status = SheetSyncStatus.PENDING
+                job.attempts = max(0, int(job.attempts or 0) - 1)
                 job.processing_started_at = None
+                job.next_retry_at = now + timedelta(seconds=5)
                 job.updated_at = now
                 SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
                 db.commit()
-                logger.info("Skipped superseded sheet sync job_id=%s", job.id)
-                return True
-            if job.action == SheetSyncAction.DELETE:
-                payload = SheetSyncService._payload(job)
+                return False
+            return SheetSyncService._execute_claimed_with_lock(db, job_id, now)
+
+    @staticmethod
+    def _execute_claimed_with_lock(db: Session, job_id: UUID, now: datetime) -> bool:
+        """Project a job without keeping a PostgreSQL transaction open over HTTP."""
+        job = db.get(SheetSyncJob, job_id)
+        if job is None or job.status != SheetSyncStatus.PROCESSING:
+            return False
+        if not SheetSyncService._is_job_current(db, job):
+            job.status = SheetSyncStatus.SYNCED
+            job.completed_at = now
+            job.next_retry_at = None
+            job.processing_started_at = None
+            job.updated_at = now
+            SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
+            db.commit()
+            logger.info("Skipped superseded sheet sync job_id=%s", job.id)
+            return True
+
+        # Snapshot all values while the session is attached, then end its read
+        # transaction before Google Sheets I/O. Formerly the advisory lock and
+        # this transaction lived through the whole HTTP call, blocking edits of
+        # the same movement and contributing to pool starvation.
+        action = job.action
+        sheet_id = job.sheet_id
+        movement_id = job.movement_id
+        payload = SheetSyncService._payload(job)
+        movement = None
+        if action != SheetSyncAction.DELETE:
+            movement = SheetSyncService._load_movement(db, movement_id)
+            if movement is None:
+                SheetSyncService._record_failure(
+                    job,
+                    RuntimeError(f"Movement not found for sheet sync: {movement_id}"),
+                    now,
+                )
+                SheetSyncService._refresh_movement_sync_status(db, movement_id)
+                db.commit()
+                return False
+        db.expunge_all()
+        db.commit()
+
+        try:
+            if action == SheetSyncAction.DELETE:
                 delete_movement_from_sheets(
-                    job.sheet_id,
-                    str(job.movement_id),
+                    sheet_id,
+                    str(movement_id),
                     recalculate_product_cells=SheetSyncService._previous_product_cells(payload),
                     recalculate_period_id=payload.get("recalculate_period_id"),
                 )
             else:
-                movement = SheetSyncService._load_movement(db, job.movement_id)
-                if movement is None:
-                    raise RuntimeError(f"Movement not found for sheet sync: {job.movement_id}")
                 update_movement_sheets(
-                    job.sheet_id,
+                    sheet_id,
                     movement,
-                    previous_product_cells=SheetSyncService._previous_product_cells(SheetSyncService._payload(job)),
+                    previous_product_cells=SheetSyncService._previous_product_cells(payload),
                 )
+
+            job = db.get(SheetSyncJob, job_id)
+            if job is None or job.status != SheetSyncStatus.PROCESSING:
+                return False
             job.status = SheetSyncStatus.SYNCED
             job.completed_at = now
             job.next_retry_at = None
@@ -205,6 +236,36 @@ class SheetSyncService:
             db.commit()
             logger.exception("Sheet sync failed. job_id=%s movement_id=%s attempt=%s", job.id, job.movement_id, job.attempts)
             return False
+
+    @staticmethod
+    @contextmanager
+    def _projection_lock(movement_id: UUID):
+        """Cross-process lock that does not retain an open DB transaction.
+
+        The dedicated connection is reserved only by the background worker
+        while Sheets is called; user sessions remain free to commit promptly.
+        PostgreSQL releases it automatically if the worker dies.
+        """
+        if engine.dialect.name != "postgresql":
+            yield True
+            return
+        raw_connection = engine.raw_connection()
+        cursor = raw_connection.cursor()
+        acquired = False
+        try:
+            cursor.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (str(movement_id),))
+            acquired = bool(cursor.fetchone()[0])
+            raw_connection.commit()
+            yield acquired
+        finally:
+            if acquired:
+                try:
+                    cursor.execute("SELECT pg_advisory_unlock(hashtext(%s))", (str(movement_id),))
+                    raw_connection.commit()
+                except Exception:
+                    logger.exception("Could not release sheet projection lock movement_id=%s", movement_id)
+            cursor.close()
+            raw_connection.close()
 
     @staticmethod
     def _record_failure(job: SheetSyncJob, exc: Exception, now: datetime, *, include_traceback: bool = True) -> None:
@@ -306,20 +367,6 @@ class SheetSyncService:
         if job.action == SheetSyncAction.DELETE:
             return current_sheet_id != job.sheet_id
         return current_sheet_id == job.sheet_id
-
-    @staticmethod
-    def _try_lock_movement(db: Session, movement_id: UUID) -> bool:
-        """Serialize projections of a movement across all PostgreSQL workers.
-
-        It is a transaction-scoped advisory lock, so commits/rollbacks release
-        it even if the worker crashes. PostgreSQL is the application's required
-        database (UUID/enums and psycopg2 are already part of this project).
-        """
-        if db.bind is None or db.bind.dialect.name != "postgresql":
-            return True
-        return bool(
-            db.scalar(text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"), {"key": str(movement_id)})
-        )
 
     @staticmethod
     def _load_movement(db: Session, movement_id: UUID) -> Movement | None:

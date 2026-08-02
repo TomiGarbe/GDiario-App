@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,15 +8,21 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.api.router import api_router
 from app.core.migrations import run_startup_migrations
+from app.core.observability import ObservabilityMiddleware, configure_logging
 from app.services.sheet_sync_service import SheetSyncService
 
+configure_logging()
 app = FastAPI(title="GDiario API")
 logger = logging.getLogger(__name__)
 
 
 @app.on_event("startup")
 async def startup() -> None:
-    run_startup_migrations()
+    # Migrations must normally run once in the deployment job. Running Alembic
+    # in every Gunicorn worker races on scale-out and delays readiness.
+    if os.getenv("RUN_STARTUP_MIGRATIONS", "false").strip().lower() == "true":
+        logger.warning("Running startup migrations; do not use with multiple production workers")
+        run_startup_migrations()
     app.state.sheet_sync_stop = asyncio.Event()
     app.state.sheet_sync_task = asyncio.create_task(_sheet_sync_worker(), name="sheet-sync-worker")
 
@@ -51,6 +58,7 @@ async def _sheet_sync_worker() -> None:
             pass
 
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+app.add_middleware(ObservabilityMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

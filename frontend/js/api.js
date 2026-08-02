@@ -2,6 +2,7 @@ const API_URL = String(
   window.API_URL || window.NEXT_PUBLIC_API_URL || "https://gdiario.azurewebsites.net"
 ).trim().replace(/\/$/, "");
 const API_BASE_URL = API_URL + "/api";
+var API_REQUEST_TIMEOUT_MS = 25000;
 
 console.log("API_URL:", API_URL);
 
@@ -516,10 +517,22 @@ function request(path, opts) {
     'Content-Type': 'application/json'
   }, authHeaders, options.headers || {});
 
+  var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  var timedOut = false;
+  var timeoutId = controller ? setTimeout(function() {
+    timedOut = true;
+    controller.abort();
+  }, API_REQUEST_TIMEOUT_MS) : null;
+  var requestId = (window.crypto && typeof window.crypto.randomUUID === 'function')
+    ? window.crypto.randomUUID()
+    : String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+  headers['X-Request-ID'] = requestId;
+
   return fetch(url, {
     method: method,
     headers: headers,
-    body: bodyPayload !== undefined ? JSON.stringify(bodyPayload) : undefined
+    body: bodyPayload !== undefined ? JSON.stringify(bodyPayload) : undefined,
+    signal: controller ? controller.signal : undefined
   }).then(function(response) {
     if (response.status === 401) {
       handleUnauthorized();
@@ -545,11 +558,19 @@ function request(path, opts) {
       return payload;
     });
   }).catch(function(err) {
+    if (timedOut) {
+      var timeoutError = new Error('La solicitud supero los ' + (API_REQUEST_TIMEOUT_MS / 1000) + ' segundos (ID: ' + requestId + ')');
+      timeoutError.code = 'REQUEST_TIMEOUT';
+      timeoutError.requestId = requestId;
+      throw timeoutError;
+    }
     var msg = String(err && err.message ? err.message : err || '').toLowerCase();
     if (msg.indexOf('failed to fetch') !== -1 || msg.indexOf('networkerror') !== -1) {
       throw new Error('No se pudo conectar con el backend');
     }
     throw err;
+  }).finally(function() {
+    if (timeoutId !== null) clearTimeout(timeoutId);
   });
 }
 

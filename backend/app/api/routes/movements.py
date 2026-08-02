@@ -6,11 +6,11 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.db import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_admin_user
 from app.models.client import Client
 from app.models.movement import Movement, MovementType
 from app.models.movement_client_payment import MovementClientPayment
@@ -169,6 +169,7 @@ def create_movement(payload: MovementCreate, db: Session = Depends(get_db)) -> M
 @router.post("/debug/test-sheets")
 def debug_test_sheets(
     period_id: int = Query(..., ge=190001, le=299912),
+    _admin_user: str = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     result = MovementService.test_sheets_for_period(db, period_id)
@@ -290,25 +291,23 @@ def get_entities(db: Session = Depends(get_db)) -> EntitiesOut:
 
 @router.get("/balance", response_model=BalanceOut)
 def get_balance(db: Session = Depends(get_db)) -> BalanceOut:
-    movements = db.query(Movement).filter(Movement.deleted_at.is_(None)).all()
-
-    balance = Decimal("0")
-
-    for m in movements:
-        amount = Decimal(m.amount)
-        tipo = (
-            m.type.value.lower()
-            if hasattr(m.type, "value")
-            else str(m.type).lower()
-        )
-        if tipo == "entrega_dinero":
-            balance += amount
-        elif tipo == "venta":
-            continue
-        else:
-            balance -= amount
-
-    return {"balance": str(balance)}
+    # Preserve the former business rule, but calculate it in PostgreSQL. The
+    # old implementation loaded every historical movement into one worker.
+    balance = db.scalar(
+        select(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Movement.type == MovementType.ENTREGA_DINERO, Movement.amount),
+                        (Movement.type == MovementType.VENTA, 0),
+                        else_=-Movement.amount,
+                    )
+                ),
+                0,
+            )
+        ).where(Movement.deleted_at.is_(None))
+    )
+    return {"balance": str(Decimal(balance))}
 
 
 @router.get("/{movement_id}", response_model=MovementOut)
@@ -333,7 +332,7 @@ def update_movement(movement_id: UUID, payload: MovementUpdate, db: Session = De
         raise
 
 
-@router.delete("/{movement_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{movement_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_movement(movement_id: UUID, db: Session = Depends(get_db)) -> None:
     try:
         MovementService.delete_movement(db, movement_id)

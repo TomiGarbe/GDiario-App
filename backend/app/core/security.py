@@ -9,6 +9,7 @@ from google.oauth2 import id_token
 from jose import JWTError, jwt
 
 from app.core.config import get_settings
+from app.core.observability import set_request_user
 
 security = HTTPBearer()
 
@@ -43,6 +44,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         sub = str(payload.get("sub") or "").strip()
         if not sub:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
+        set_request_user(sub)
         return sub
     except JWTError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido") from exc

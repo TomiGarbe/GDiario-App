@@ -23,6 +23,13 @@ class Settings:
     google_credentials_json: str
     sheets_timeout_seconds: int
     company_name: str
+    db_pool_size: int
+    db_max_overflow: int
+    db_pool_timeout_seconds: int
+    db_pool_recycle_seconds: int
+    db_statement_timeout_ms: int
+    db_lock_timeout_ms: int
+    db_idle_transaction_timeout_ms: int
 
 
 @lru_cache
@@ -67,6 +74,29 @@ def get_settings() -> Settings:
         raise RuntimeError("SHEETS_TIMEOUT_SECONDS must be greater than zero")
     company_name = os.getenv("COMPANY_NAME", "No configurada").strip() or "No configurada"
 
+    # These bounded defaults prevent a saturated or blocked database from
+    # turning into requests that wait forever. They can be tuned per App
+    # Service instance without a deployment.
+    db_pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+    db_max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "5"))
+    db_pool_timeout_seconds = int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "15"))
+    db_pool_recycle_seconds = int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800"))
+    db_statement_timeout_ms = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "15000"))
+    db_lock_timeout_ms = int(os.getenv("DB_LOCK_TIMEOUT_MS", "5000"))
+    db_idle_transaction_timeout_ms = int(os.getenv("DB_IDLE_TRANSACTION_TIMEOUT_MS", "30000"))
+    if (
+        db_pool_size < 1
+        or db_max_overflow < 0
+        or min(
+            db_pool_timeout_seconds,
+            db_pool_recycle_seconds,
+            db_statement_timeout_ms,
+            db_lock_timeout_ms,
+            db_idle_transaction_timeout_ms,
+        ) <= 0
+    ):
+        raise RuntimeError("Database pool and timeout settings must be positive")
+
     return Settings(
         database_url=database_url,
         jwt_secret_key=jwt_secret_key,
@@ -79,4 +109,11 @@ def get_settings() -> Settings:
         google_credentials_json=google_credentials_json,
         sheets_timeout_seconds=sheets_timeout_seconds,
         company_name=company_name,
+        db_pool_size=db_pool_size,
+        db_max_overflow=db_max_overflow,
+        db_pool_timeout_seconds=db_pool_timeout_seconds,
+        db_pool_recycle_seconds=db_pool_recycle_seconds,
+        db_statement_timeout_ms=db_statement_timeout_ms,
+        db_lock_timeout_ms=db_lock_timeout_ms,
+        db_idle_transaction_timeout_ms=db_idle_transaction_timeout_ms,
     )

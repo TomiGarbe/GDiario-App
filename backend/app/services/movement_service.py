@@ -192,7 +192,11 @@ class MovementService:
     def test_sheets_for_period(db: Session, period_id: int) -> str:
         sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
         if not sheet_id:
+            db.rollback()
             return f"ERROR: period_id={period_id} has no sheet_id"
+        # This diagnostic call talks to an external service. It must never
+        # retain the read transaction opened by _get_sheet_id_for_period_id.
+        db.commit()
         test_sheets(sheet_id)
         return f"OK: test_sheets executed for period_id={period_id} sheet_id={sheet_id}"
 

@@ -4,6 +4,7 @@ const API_URL = (import.meta.env.VITE_API_URL || "https://gdiario.azurewebsites.
   .trim()
   .replace(/\/$/, "");
 const API_BASE_URL = `${API_URL}/api`;
+const REQUEST_TIMEOUT_MS = 25_000;
 
 console.log("API_URL:", API_URL);
 
@@ -47,21 +48,36 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const requestBody = body !== undefined ? JSON.stringify(body) : undefined;
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort("timeout"), REQUEST_TIMEOUT_MS);
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
   let response: Response;
   try {
     response = await fetch(url, {
       method,
-      signal,
+      signal: controller.signal,
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
+        "X-Request-ID": requestId,
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...headers,
       },
       body: requestBody,
     });
-  } catch {
+  } catch (error) {
+    if (controller.signal.aborted && controller.signal.reason === "timeout") {
+      throw new ApiError(`The request exceeded ${REQUEST_TIMEOUT_MS / 1000} seconds (request ID: ${requestId})`, 0);
+    }
     throw new ApiError("Network error: could not connect to server", 0);
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
 
   if (response.status === 204) return undefined as T;
