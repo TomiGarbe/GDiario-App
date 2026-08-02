@@ -36,6 +36,9 @@ class SheetSyncJobOut(BaseModel):
     error_stack_trace: str | None
     error_http_status: int | None
     error_http_response: str | None
+    last_step: str | None
+    timings_json: str | None
+    failure_history_json: str | None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
@@ -74,6 +77,9 @@ def _job_out(row: tuple[SheetSyncJob, Movement | None]) -> SheetSyncJobOut:
         error_stack_trace=job.error_stack_trace,
         error_http_status=job.error_http_status,
         error_http_response=job.error_http_response,
+        last_step=job.last_step,
+        timings_json=job.timings_json,
+        failure_history_json=job.failure_history_json,
         created_at=job.created_at,
         updated_at=job.updated_at,
         completed_at=job.completed_at,

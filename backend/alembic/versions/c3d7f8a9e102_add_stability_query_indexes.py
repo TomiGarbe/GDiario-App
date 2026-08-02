@@ -22,12 +22,12 @@ def upgrade() -> None:
         )
         # Enables the outbox poller to find due jobs without scanning its history.
         op.execute(
-            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_sheet_sync_jobs_due "
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_sheet_sync_jobs_due_ordered "
             "ON sheet_sync_jobs (status, next_retry_at, created_at, id)"
         )
 
 
 def downgrade() -> None:
     with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_sheet_sync_jobs_due")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_sheet_sync_jobs_due_ordered")
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_movements_active_date_created")

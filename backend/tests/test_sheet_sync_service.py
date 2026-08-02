@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,3 +40,14 @@ def test_failed_first_attempt_is_scheduled_thirty_seconds_later() -> None:
     SheetSyncService._record_failure(job, RuntimeError("unavailable"), now)
     assert job.status == SheetSyncStatus.TEMPORARY_ERROR
     assert job.next_retry_at == now + timedelta(seconds=30)
+
+
+def test_failure_keeps_diagnostic_history_for_a_successful_retry() -> None:
+    now = datetime.now(timezone.utc)
+    job = SheetSyncJob(attempts=1, max_attempts=6, status=SheetSyncStatus.PROCESSING)
+    SheetSyncService._record_failure(job, RuntimeError("connection reset"), now, failure_step="google.update_cell")
+
+    history = json.loads(job.failure_history_json)
+    assert job.last_step == "google.update_cell"
+    assert history[0]["exception_type"] == "RuntimeError"
+    assert history[0]["step"] == "google.update_cell"

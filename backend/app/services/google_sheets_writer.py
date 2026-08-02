@@ -23,6 +23,7 @@ from app.models.movement import Movement
 from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
 from app.models.product import Product
+from app.services.sheet_sync_trace import log_google_response, traced_step
 from app.utils.sheets_date_utils import normalize_sheet_date_key, normalize_sheet_day_month_key
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,11 @@ SHEETS_FONT_SIZE = 11
 SHEETS_NUMBER_PATTERN = "#,##0.00"
 SHEETS_MONEY_PATTERN = "$#,##0.00"
 SHEETS_DATE_PATTERN = "dd/mm/yyyy"
+# Product sheets reserve columns A:B for row identity (client and variant).
+# This matches the Apps Script synchronizer, where date columns start at C and
+# the final column is not a daily date column.
+PRODUCT_DATE_FIRST_COLUMN_INDEX = 2
+PRODUCT_TRAILING_NON_DATE_COLUMNS = 1
 SHEET_COLUMN_FORMATS = {
     "MOVEMENTS": {"date": [2], "money": [3], "number": []},
     "ITEMS": {"date": [], "money": [4, 5], "number": [3]},
@@ -90,6 +96,21 @@ def get_sheets_service():
     settings = get_settings()
     http = AuthorizedHttp(credentials, http=httplib2.Http(timeout=settings.sheets_timeout_seconds))
     return build("sheets", "v4", http=http, cache_discovery=False)
+
+
+def _google_execute(request, *, operation: str, spreadsheet_id: str, sheet_name: str | None = None,
+                    range_name: str | None = None, bucket: str = "write") -> dict:
+    """Execute one Google call while retaining the exact failing worker step."""
+    step = f"google.{operation}"
+    with traced_step(
+        step, bucket=bucket, spreadsheet_id=spreadsheet_id,
+        sheet_name=sheet_name, range=range_name,
+    ):
+        response = request.execute()
+        log_google_response(
+            operation=operation, response=response, sheet_name=sheet_name, range_name=range_name,
+        )
+        return response
 
 
 def _format_sheet_rows(
@@ -173,10 +194,10 @@ def _format_sheet_rows(
     for col in money_cols:
         add_column_format(col, "CURRENCY", SHEETS_MONEY_PATTERN)
 
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=sheet_id,
-        body={"requests": requests},
-    ).execute()
+    _google_execute(
+        service.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body={"requests": requests}),
+        operation="format_rows", spreadsheet_id=sheet_id, sheet_name=sheet_name,
+    )
 
 
 def _rows_from_updated_range(updated_range: str | None) -> tuple[int, int] | None:
@@ -223,12 +244,11 @@ def append_movement(sheet_id: str, movement: Movement) -> None:
         movement.source or "",
     ]]
     try:
-        response = service.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range="MOVEMENTS!A:G",
-            valueInputOption="USER_ENTERED",
-            body={"values": values},
-        ).execute()
+        response = _google_execute(
+            service.spreadsheets().values().append(
+                spreadsheetId=sheet_id, range="MOVEMENTS!A:G", valueInputOption="USER_ENTERED", body={"values": values},
+            ), operation="append_movement", spreadsheet_id=sheet_id, sheet_name="MOVEMENTS", range_name="MOVEMENTS!A:G",
+        )
         _format_append_response(service, sheet_id, "MOVEMENTS", response, col_count=7)
     except Exception as e:
         print(f"[ERROR] {str(e)}")
@@ -253,12 +273,11 @@ def append_items(sheet_id: str, items: list[MovementItem]) -> None:
     ]
 
     try:
-        response = service.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range="ITEMS!A:F",
-            valueInputOption="USER_ENTERED",
-            body={"values": values},
-        ).execute()
+        response = _google_execute(
+            service.spreadsheets().values().append(
+                spreadsheetId=sheet_id, range="ITEMS!A:F", valueInputOption="USER_ENTERED", body={"values": values},
+            ), operation="append_items", spreadsheet_id=sheet_id, sheet_name="ITEMS", range_name="ITEMS!A:F",
+        )
         _format_append_response(service, sheet_id, "ITEMS", response, col_count=6)
     except Exception as e:
         print(f"[ERROR] {str(e)}")
@@ -319,6 +338,9 @@ def append_items_to_product_sheets(sheet_id: str, movement: Movement) -> None:
                 product_name,
                 sheet_name,
             )
+            # A product-sheet write is part of this durable projection. Hiding
+            # its error marked the job SYNCED even when GRASA/HUESOS was stale.
+            raise
 
 
 def append_client_payments(sheet_id: str, payments: list[MovementClientPayment]) -> None:
@@ -336,12 +358,11 @@ def append_client_payments(sheet_id: str, payments: list[MovementClientPayment])
     ]
 
     try:
-        response = service.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range="CLIENT_PAYMENTS!A:C",
-            valueInputOption="USER_ENTERED",
-            body={"values": values},
-        ).execute()
+        response = _google_execute(
+            service.spreadsheets().values().append(
+                spreadsheetId=sheet_id, range="CLIENT_PAYMENTS!A:C", valueInputOption="USER_ENTERED", body={"values": values},
+            ), operation="append_client_payments", spreadsheet_id=sheet_id, sheet_name="CLIENT_PAYMENTS", range_name="CLIENT_PAYMENTS!A:C",
+        )
         _format_append_response(service, sheet_id, "CLIENT_PAYMENTS", response, col_count=3)
     except Exception as e:
         print(f"[ERROR] {str(e)}")
@@ -367,12 +388,11 @@ def append_client_payments_to_cuentas(sheet_id: str, movement: Movement) -> None
             float(payment.subtotal),
             str(movement.id),
         ]]
-        response = service.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range="CUENTAS!A:J",
-            valueInputOption="USER_ENTERED",
-            body={"values": values},
-        ).execute()
+        response = _google_execute(
+            service.spreadsheets().values().append(
+                spreadsheetId=sheet_id, range="CUENTAS!A:J", valueInputOption="USER_ENTERED", body={"values": values},
+            ), operation="append_cuenta", spreadsheet_id=sheet_id, sheet_name="CUENTAS", range_name="CUENTAS!A:J",
+        )
         _format_append_response(service, sheet_id, "CUENTAS", response, col_count=10)
 
 
@@ -398,12 +418,12 @@ def _extract_salary_amount(salary) -> float:
 
 def _update_sheet_row(service, sheet_id: str, sheet_name: str, row_index: int, row_values: list[object]) -> None:
     end_col = _to_col_letter(len(row_values) - 1)
-    service.spreadsheets().values().update(
-        spreadsheetId=sheet_id,
-        range=f"{sheet_name}!A{row_index}:{end_col}{row_index}",
-        valueInputOption="USER_ENTERED",
-        body={"values": [row_values]},
-    ).execute()
+    range_name = f"{sheet_name}!A{row_index}:{end_col}{row_index}"
+    _google_execute(
+        service.spreadsheets().values().update(
+            spreadsheetId=sheet_id, range=range_name, valueInputOption="USER_ENTERED", body={"values": [row_values]},
+        ), operation="update_row", spreadsheet_id=sheet_id, sheet_name=sheet_name, range_name=range_name,
+    )
     _format_sheet_rows(
         service,
         sheet_id,
@@ -417,12 +437,12 @@ def _update_sheet_row(service, sheet_id: str, sheet_name: str, row_index: int, r
 
 def _append_sheet_row(service, sheet_id: str, sheet_name: str, row_values: list[object]) -> None:
     end_col = _to_col_letter(len(row_values) - 1)
-    response = service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
-        range=f"{sheet_name}!A:{end_col}",
-        valueInputOption="USER_ENTERED",
-        body={"values": [row_values]},
-    ).execute()
+    range_name = f"{sheet_name}!A:{end_col}"
+    response = _google_execute(
+        service.spreadsheets().values().append(
+            spreadsheetId=sheet_id, range=range_name, valueInputOption="USER_ENTERED", body={"values": [row_values]},
+        ), operation="append_row", spreadsheet_id=sheet_id, sheet_name=sheet_name, range_name=range_name,
+    )
     _format_append_response(service, sheet_id, sheet_name, response, col_count=len(row_values))
 
 
@@ -519,30 +539,34 @@ def append_gasto_to_sheet(sheet_id: str, movement: Movement) -> None:
         True,
     ]]
     service = get_sheets_service()
-    response = service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
-        range="GASTOS!A:E",
-        valueInputOption="USER_ENTERED",
-        body={"values": values},
-    ).execute()
+    response = _google_execute(
+        service.spreadsheets().values().append(
+            spreadsheetId=sheet_id, range="GASTOS!A:E", valueInputOption="USER_ENTERED", body={"values": values},
+        ), operation="append_gasto", spreadsheet_id=sheet_id, sheet_name="GASTOS", range_name="GASTOS!A:E",
+    )
     _format_append_response(service, sheet_id, "GASTOS", response, col_count=5)
 
 
 def sync_movement_to_sheets(sheet_id: str, movement: Movement) -> None:
-    append_movement(sheet_id, movement)
-    append_items(sheet_id, list(movement.items or []))
-    for salary in movement.salaries or []:
-        append_salary_detail_to_salaries(sheet_id, movement, salary)
-        append_salary_summary_to_sueldos(sheet_id, movement, salary)
-    append_client_payments(sheet_id, list(movement.client_payments or []))
+    with traced_step(
+        "prepare_payload", movement_id=str(movement.id), movement_type=_movement_type_key(movement),
+        item_count=len(movement.items or []), salary_count=len(movement.salaries or []),
+        payment_count=len(movement.client_payments or []),
+    ):
+        append_movement(sheet_id, movement)
+        append_items(sheet_id, list(movement.items or []))
+        for salary in movement.salaries or []:
+            append_salary_detail_to_salaries(sheet_id, movement, salary)
+            append_salary_summary_to_sueldos(sheet_id, movement, salary)
+        append_client_payments(sheet_id, list(movement.client_payments or []))
 
-    movement_type = _movement_type_key(movement)
-    if movement_type in ("compra", "venta"):
-        append_items_to_product_sheets(sheet_id, movement)
-    if movement_type == "pago_cliente":
-        append_client_payments_to_cuentas(sheet_id, movement)
-    if movement_type == "gasto":
-        append_gasto_to_sheet(sheet_id, movement)
+        movement_type = _movement_type_key(movement)
+        if movement_type in ("compra", "venta"):
+            append_items_to_product_sheets(sheet_id, movement)
+        if movement_type == "pago_cliente":
+            append_client_payments_to_cuentas(sheet_id, movement)
+        if movement_type == "gasto":
+            append_gasto_to_sheet(sheet_id, movement)
 
 
 def update_movement_sheets(
@@ -550,16 +574,20 @@ def update_movement_sheets(
     movement: Movement,
     previous_product_cells: set[tuple[date, str, str]] | None = None,
 ) -> None:
-    delete_movement_from_sheets(
-        sheet_id,
-        str(movement.id),
-        recalculate_product_cells=previous_product_cells,
-    )
+    with traced_step("remove_previous_projection", movement_id=str(movement.id)):
+        delete_movement_from_sheets(
+            sheet_id,
+            str(movement.id),
+            recalculate_product_cells=previous_product_cells,
+        )
     sync_movement_to_sheets(sheet_id, movement)
 
 
 def get_sheet_gid(service, sheet_id: str, sheet_name: str) -> int:
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    meta = _google_execute(
+        service.spreadsheets().get(spreadsheetId=sheet_id), operation="get_sheet_metadata",
+        spreadsheet_id=sheet_id, sheet_name=sheet_name, bucket="resolve_sheet",
+    )
     for sheet in meta.get("sheets", []):
         props = sheet.get("properties", {})
         if props.get("title") == sheet_name:
@@ -574,10 +602,11 @@ def find_rows_by_movement_id(
     movement_id: str,
     id_column_index: int = 0,
 ) -> list[int]:
-    result = service.spreadsheets().values().get(
-        spreadsheetId=sheet_id,
-        range=f"{sheet_name}!A:Z",
-    ).execute()
+    range_name = f"{sheet_name}!A:Z"
+    result = _google_execute(
+        service.spreadsheets().values().get(spreadsheetId=sheet_id, range=range_name),
+        operation="read_rows", spreadsheet_id=sheet_id, sheet_name=sheet_name, range_name=range_name, bucket="read_sheet",
+    )
     values = result.get("values", [])
     target = str(movement_id).strip()
     rows: list[int] = []
@@ -603,10 +632,11 @@ def find_rows_by_movement_id_and_employee(
     movement_id_column_index: int,
     employee_column_index: int,
 ) -> list[int]:
-    result = service.spreadsheets().values().get(
-        spreadsheetId=sheet_id,
-        range=f"{sheet_name}!A:Z",
-    ).execute()
+    range_name = f"{sheet_name}!A:Z"
+    result = _google_execute(
+        service.spreadsheets().values().get(spreadsheetId=sheet_id, range=range_name),
+        operation="read_rows", spreadsheet_id=sheet_id, sheet_name=sheet_name, range_name=range_name, bucket="read_sheet",
+    )
     values = result.get("values", [])
     target_movement_id = str(movement_id).strip()
     target_employee = _normalize_name(employee_name)
@@ -651,10 +681,10 @@ def delete_rows(service, sheet_id: str, sheet_name: str, row_indexes: list[int])
             }
         )
 
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=sheet_id,
-        body={"requests": requests},
-    ).execute()
+    _google_execute(
+        service.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body={"requests": requests}),
+        operation="delete_rows", spreadsheet_id=sheet_id, sheet_name=sheet_name,
+    )
 
 
 def delete_movement_from_sheets(
@@ -692,7 +722,10 @@ def delete_movement_from_sheets(
 def test_sheets(sheet_id: str) -> None:
     service = get_sheets_service()
     try:
-        service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+        _google_execute(
+            service.spreadsheets().get(spreadsheetId=sheet_id), operation="test_connection",
+            spreadsheet_id=sheet_id, bucket="read_sheet",
+        )
         print("SHEETS OK")
     except Exception as e:
         print(f"[ERROR] {str(e)}")
@@ -706,6 +739,15 @@ def _to_col_letter(col_index_zero_based: int) -> str:
         n, rem = divmod(n - 1, 26)
         letters.append(chr(65 + rem))
     return "".join(reversed(letters))
+
+
+def _product_date_header_indexes(header: list[object]) -> range:
+    """Return only daily-date columns defined by the GRASA/HUESOS layout."""
+    last_date_column_exclusive = max(
+        PRODUCT_DATE_FIRST_COLUMN_INDEX,
+        len(header) - PRODUCT_TRAILING_NON_DATE_COLUMNS,
+    )
+    return range(PRODUCT_DATE_FIRST_COLUMN_INDEX, last_date_column_exclusive)
 
 
 def _parse_float(value) -> float:
@@ -739,10 +781,12 @@ def _recalculate_product_quantity(
         product_name,
         period_id,
     )
-    result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id,
-        range=f"{sheet_name}!A:ZZ",
-    ).execute()
+    range_name = f"{sheet_name}!A:ZZ"
+    result = _google_execute(
+        service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=range_name),
+        operation="read_product_sheet", spreadsheet_id=spreadsheet_id, sheet_name=sheet_name,
+        range_name=range_name, bucket="read_sheet",
+    )
     values = result.get("values", [])
     if not values:
         values = [[]]
@@ -759,43 +803,36 @@ def _recalculate_product_quantity(
         )
         return
 
+    # A/B are client and product/variant, and the last column is reserved.
+    # Never pass identity/header labels to the date parser (e.g. Cliente/Nuevo).
+    date_header_cells = _product_date_header_indexes(header)
     col_index = None
-    for i, cell in enumerate(header):
-        normalized_cell_date = normalize_sheet_date_key(cell)
-        if not normalized_cell_date and str(cell or "").strip():
-            logger.warning(
-                "[SHEETS DATE] Header cell has invalid date format: sheet=%s col=%s raw=%r",
-                sheet_name,
-                i,
-                cell,
-            )
-        if normalized_cell_date == target_date:
-            col_index = i
-            break
+    with traced_step("resolve_column", bucket="resolve_column", sheet_name=sheet_name, target_date=target_date):
+        for i in date_header_cells:
+            normalized_cell_date = normalize_sheet_date_key(header[i])
+            if normalized_cell_date == target_date:
+                col_index = i
+                break
     if col_index is None:
         target_day_month = normalize_sheet_day_month_key(movement_date)
-        for i, cell in enumerate(header):
-            if normalize_sheet_day_month_key(cell) == target_day_month:
-                col_index = i
-                logger.info(
-                    "[SHEETS PRODUCT] date fallback matched sheet=%s target=%s header_cell=%s col_index=%s",
-                    sheet_name,
-                    target_day_month,
-                    cell,
-                    i,
-                )
-                break
+        with traced_step("resolve_column_fallback", bucket="resolve_column", sheet_name=sheet_name, target_date=target_day_month):
+            for i in date_header_cells:
+                if normalize_sheet_day_month_key(header[i]) == target_day_month:
+                    col_index = i
+                    logger.info(
+                        "[SHEETS PRODUCT] date fallback matched sheet=%s target=%s header_cell=%s col_index=%s",
+                        sheet_name, target_day_month, header[i], i,
+                    )
+                    break
     if col_index is None:
         logger.warning("[SHEETS SKIP] Fecha no encontrada: %s (sheet=%s)", target_date, sheet_name)
         return
 
     rows = values[1:] if len(values) > 1 else []
-    row_index = _find_row_by_client_and_product(
-        rows=rows,
-        client_name=client_name,
-        product_name=product_name,
-        sheet_name=sheet_name,
-    )
+    with traced_step("resolve_row", bucket="resolve_row", sheet_name=sheet_name, client=client_name, product=product_name):
+        row_index = _find_row_by_client_and_product(
+            rows=rows, client_name=client_name, product_name=product_name, sheet_name=sheet_name,
+        )
     if row_index is None:
         logger.warning(
             "[SHEETS SKIP] Cliente no encontrado: %s (producto=%s, sheet=%s)",
@@ -822,11 +859,10 @@ def _recalculate_product_quantity(
 
     cell_ref = f"{sheet_name}!{col_letter}{row_index}"
     if total_quantity == Decimal("0"):
-        service.spreadsheets().values().clear(
-            spreadsheetId=spreadsheet_id,
-            range=cell_ref,
-            body={},
-        ).execute()
+        _google_execute(
+            service.spreadsheets().values().clear(spreadsheetId=spreadsheet_id, range=cell_ref, body={}),
+            operation="clear_cell", spreadsheet_id=spreadsheet_id, sheet_name=sheet_name, range_name=cell_ref,
+        )
         _format_sheet_rows(
             service,
             spreadsheet_id,
@@ -841,12 +877,12 @@ def _recalculate_product_quantity(
         )
         return
 
-    service.spreadsheets().values().update(
-        spreadsheetId=spreadsheet_id,
-        range=cell_ref,
-        valueInputOption="USER_ENTERED",
-        body={"values": [[float(total_quantity)]]},
-    ).execute()
+    _google_execute(
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id, range=cell_ref, valueInputOption="USER_ENTERED",
+            body={"values": [[float(total_quantity)]]},
+        ), operation="update_cell", spreadsheet_id=spreadsheet_id, sheet_name=sheet_name, range_name=cell_ref,
+    )
     _format_sheet_rows(
         service,
         spreadsheet_id,

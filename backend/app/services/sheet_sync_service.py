@@ -25,6 +25,7 @@ from app.models.movement_salary import MovementSalary
 from app.models.period import Period
 from app.models.sheet_sync_job import SheetSyncAction, SheetSyncJob, SheetSyncStatus
 from app.services.google_sheets_writer import delete_movement_from_sheets, update_movement_sheets
+from app.services.sheet_sync_trace import get_trace, job_trace, traced_step
 
 logger = logging.getLogger(__name__)
 
@@ -142,32 +143,42 @@ class SheetSyncService:
         if job is None or job.status != SheetSyncStatus.PROCESSING:
             return False
         now = datetime.now(timezone.utc)
-        with SheetSyncService._projection_lock(job.movement_id) as acquired:
-            if not acquired:
-                # Another process is projecting this movement. This is not a
-                # Sheets failure and must not consume one of the six attempts.
-                job.status = SheetSyncStatus.PENDING
-                job.attempts = max(0, int(job.attempts or 0) - 1)
-                job.processing_started_at = None
-                job.next_retry_at = now + timedelta(seconds=5)
-                job.updated_at = now
-                SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
-                db.commit()
-                return False
-            return SheetSyncService._execute_claimed_with_lock(db, job_id, now)
+        with job_trace(
+            job_id=str(job.id), movement_id=str(job.movement_id), spreadsheet_id=job.sheet_id,
+            action=SheetSyncService._enum_text(job.action),
+        ):
+            with traced_step("acquire_projection_lock", spreadsheet_id=job.sheet_id):
+                with SheetSyncService._projection_lock(job.movement_id) as acquired:
+                    if not acquired:
+                        # Another process is projecting this movement. This is not a
+                        # Sheets failure and must not consume one of the six attempts.
+                        job.status = SheetSyncStatus.PENDING
+                        job.attempts = max(0, int(job.attempts or 0) - 1)
+                        job.processing_started_at = None
+                        job.next_retry_at = now + timedelta(seconds=5)
+                        job.updated_at = now
+                        SheetSyncService._store_trace(job)
+                        SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
+                        db.commit()
+                        return False
+                    return SheetSyncService._execute_claimed_with_lock(db, job_id, now)
 
     @staticmethod
     def _execute_claimed_with_lock(db: Session, job_id: UUID, now: datetime) -> bool:
         """Project a job without keeping a PostgreSQL transaction open over HTTP."""
-        job = db.get(SheetSyncJob, job_id)
+        with traced_step("load_job"):
+            job = db.get(SheetSyncJob, job_id)
         if job is None or job.status != SheetSyncStatus.PROCESSING:
             return False
-        if not SheetSyncService._is_job_current(db, job):
+        with traced_step("resolve_sheet", bucket="resolve_sheet", spreadsheet_id=job.sheet_id):
+            is_current = SheetSyncService._is_job_current(db, job)
+        if not is_current:
             job.status = SheetSyncStatus.SYNCED
             job.completed_at = now
             job.next_retry_at = None
             job.processing_started_at = None
             job.updated_at = now
+            SheetSyncService._store_trace(job)
             SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
             db.commit()
             logger.info("Skipped superseded sheet sync job_id=%s", job.id)
@@ -183,13 +194,15 @@ class SheetSyncService:
         payload = SheetSyncService._payload(job)
         movement = None
         if action != SheetSyncAction.DELETE:
-            movement = SheetSyncService._load_movement(db, movement_id)
+            with traced_step("load_movement"):
+                movement = SheetSyncService._load_movement(db, movement_id)
             if movement is None:
                 SheetSyncService._record_failure(
                     job,
                     RuntimeError(f"Movement not found for sheet sync: {movement_id}"),
                     now,
                 )
+                SheetSyncService._store_trace(job)
                 SheetSyncService._refresh_movement_sync_status(db, movement_id)
                 db.commit()
                 return False
@@ -198,43 +211,60 @@ class SheetSyncService:
 
         try:
             if action == SheetSyncAction.DELETE:
-                delete_movement_from_sheets(
-                    sheet_id,
-                    str(movement_id),
-                    recalculate_product_cells=SheetSyncService._previous_product_cells(payload),
-                    recalculate_period_id=payload.get("recalculate_period_id"),
-                )
+                with traced_step("delete_movement_from_sheets", spreadsheet_id=sheet_id):
+                    delete_movement_from_sheets(
+                        sheet_id,
+                        str(movement_id),
+                        recalculate_product_cells=SheetSyncService._previous_product_cells(payload),
+                        recalculate_period_id=payload.get("recalculate_period_id"),
+                    )
             else:
-                update_movement_sheets(
-                    sheet_id,
-                    movement,
-                    previous_product_cells=SheetSyncService._previous_product_cells(payload),
-                )
+                with traced_step("update_movement_sheets", spreadsheet_id=sheet_id):
+                    update_movement_sheets(
+                        sheet_id,
+                        movement,
+                        previous_product_cells=SheetSyncService._previous_product_cells(payload),
+                    )
 
             job = db.get(SheetSyncJob, job_id)
             if job is None or job.status != SheetSyncStatus.PROCESSING:
                 return False
-            job.status = SheetSyncStatus.SYNCED
-            job.completed_at = now
-            job.next_retry_at = None
-            job.processing_started_at = None
-            job.last_error = None
-            job.error_stack_trace = None
-            job.error_http_status = None
-            job.error_http_response = None
-            job.updated_at = now
-            SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
-            db.commit()
+            with traced_step("persist_status", bucket="persist"):
+                job.status = SheetSyncStatus.SYNCED
+                job.completed_at = now
+                job.next_retry_at = None
+                job.processing_started_at = None
+                job.last_error = None
+                job.error_stack_trace = None
+                job.error_http_status = None
+                job.error_http_response = None
+                job.updated_at = now
+                SheetSyncService._store_trace(job)
+                SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
+                db.commit()
             return True
         except Exception as exc:
             db.rollback()
             job = db.get(SheetSyncJob, job_id)
             if job is None:
                 return False
-            SheetSyncService._record_failure(job, exc, now)
-            SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
-            db.commit()
-            logger.exception("Sheet sync failed. job_id=%s movement_id=%s attempt=%s", job.id, job.movement_id, job.attempts)
+            trace = get_trace()
+            failure_step = trace.last_step if trace is not None else "unknown"
+            with traced_step("persist_failure", bucket="persist"):
+                SheetSyncService._record_failure(job, exc, now, failure_step=failure_step)
+                SheetSyncService._refresh_movement_sync_status(db, job.movement_id)
+                db.commit()
+            logger.exception(
+                "Sheet sync failed. job_id=%s movement_id=%s spreadsheet_id=%s step=%s attempt=%s",
+                job.id, job.movement_id, job.sheet_id, failure_step, job.attempts,
+                extra={
+                    "event": "sheet_sync_job_failed", "job_id": str(job.id),
+                    "movement_id": str(job.movement_id), "spreadsheet_id": job.sheet_id,
+                    "step": failure_step, "exception_type": exc.__class__.__name__,
+                    "exception_message": str(exc), "google_http_status": job.error_http_status,
+                    "google_response_body": job.error_http_response,
+                },
+            )
             return False
 
     @staticmethod
@@ -268,7 +298,16 @@ class SheetSyncService:
             raw_connection.close()
 
     @staticmethod
-    def _record_failure(job: SheetSyncJob, exc: Exception, now: datetime, *, include_traceback: bool = True) -> None:
+    def _record_failure(
+        job: SheetSyncJob,
+        exc: Exception,
+        now: datetime,
+        *,
+        include_traceback: bool = True,
+        failure_step: str | None = None,
+    ) -> None:
+        trace = get_trace()
+        failure_step = failure_step or (trace.last_step if trace is not None else "unknown")
         attempts = int(job.attempts or 0)
         # A lease can expire before a worker managed to increment an old record.
         if attempts <= 0:
@@ -279,6 +318,29 @@ class SheetSyncService:
         status, response = SheetSyncService._http_error_details(exc)
         job.error_http_status = status
         job.error_http_response = response
+        job.last_step = failure_step
+        if trace is not None:
+            job.timings_json = json.dumps(trace.snapshot(), default=str)
+        SheetSyncService._append_failure_history(
+            job,
+            step=failure_step,
+            exc=exc,
+            http_status=status,
+            http_response=response,
+            stacktrace=job.error_stack_trace,
+            occurred_at=now,
+        )
+        logger.error(
+            "sheet_sync_failure_recorded",
+            extra={
+                "event": "sheet_sync_failure_recorded", "job_id": str(job.id),
+                "movement_id": str(job.movement_id), "spreadsheet_id": job.sheet_id,
+                "step": failure_step, "exception_type": exc.__class__.__name__,
+                "exception_message": str(exc), "google_http_status": status,
+                "google_response_body": response,
+            },
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
         job.processing_started_at = None
         job.completed_at = None
         job.updated_at = now
@@ -288,6 +350,47 @@ class SheetSyncService:
             return
         job.status = SheetSyncStatus.TEMPORARY_ERROR
         job.next_retry_at = now + SheetSyncService._retry_delay(attempts)
+
+    @staticmethod
+    def _store_trace(job: SheetSyncJob) -> None:
+        trace = get_trace()
+        if trace is None:
+            return
+        job.last_step = trace.last_step
+        job.timings_json = json.dumps(trace.snapshot(), default=str)
+
+    @staticmethod
+    def _append_failure_history(
+        job: SheetSyncJob,
+        *,
+        step: str,
+        exc: Exception,
+        http_status: int | None,
+        http_response: str | None,
+        stacktrace: str | None,
+        occurred_at: datetime,
+    ) -> None:
+        """Keep failure evidence after a later retry succeeds."""
+        try:
+            history = json.loads(job.failure_history_json or "[]")
+            if not isinstance(history, list):
+                history = []
+        except json.JSONDecodeError:
+            history = []
+        history.append(
+            {
+                "occurred_at": occurred_at.isoformat(),
+                "step": step,
+                "exception_type": exc.__class__.__name__,
+                "message": str(exc),
+                "google_http_status": http_status,
+                "google_response_body": http_response,
+                "stacktrace": stacktrace,
+            }
+        )
+        # At most six attempts exist today; retain ten to remain useful if the
+        # retry policy changes without unbounded row growth.
+        job.failure_history_json = json.dumps(history[-10:], default=str)
 
     @staticmethod
     def reset_for_retry(db: Session, job_id: UUID) -> SheetSyncJob | None:
