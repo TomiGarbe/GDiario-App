@@ -118,7 +118,7 @@ function accionSyncMovimientosToBackend() {
       );
     }
     syncMovementsToBackend();
-    return notificar("Movimientos enviados a la app");
+    return notificar("Sincronización Sheets → App completada");
   } catch (e) {
     return notificar(e && e.message ? e.message : String(e));
   }
@@ -172,8 +172,12 @@ function accionSyncFromBackend() {
 
 function accionConfirmSyncMovimientosToBackend() {
   try {
-    syncMovementsToBackend();
-    return notificar("Movimientos enviados a la app");
+    const result = syncMovementsToBackend() || {};
+    const movements = result.movements || {};
+    return notificar(
+      "App actualizada: " + (movements.inserted || 0) + " nuevos, " +
+      (movements.updated || 0) + " actualizados"
+    );
   } catch (e) {
     return notificar(e && e.message ? e.message : String(e));
   }

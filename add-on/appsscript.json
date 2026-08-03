@@ -12,6 +12,7 @@
     "https://script.google.com/*",
     "https://script.googleapis.com/*",
     "https://gdiario.azurewebsites.net/",
+    "https://gdiario.azurewebsites.net/api/*",
     "https://gdiario.azurewebsites.net/api/sync/export",
     "https://gdiario.azurewebsites.net/api/sync/import-sheet"
   ],

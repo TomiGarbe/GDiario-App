@@ -136,7 +136,13 @@ def sync_movement_client_payments(data: list[MovementClientPaymentSyncPayload], 
 
 @router.post("/full", response_model=SyncFullResponse, status_code=status.HTTP_200_OK)
 def sync_full(data: SyncFullRequest, db: Session = Depends(get_db)) -> SyncFullResponse:
-    _reject_sheet_as_source()
+    """Single transactional Sheets -> PostgreSQL synchronization engine.
+
+    This is intentionally the only enabled inbound route.  The Add-on sends a
+    complete snapshot for one period and SyncService applies it atomically.
+    The individual legacy import routes stay retired so no caller can compose
+    a partial, inconsistent synchronization.
+    """
     try:
         with db.begin():
             result = SyncService.sync_full(

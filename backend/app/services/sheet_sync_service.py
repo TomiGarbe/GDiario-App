@@ -79,11 +79,14 @@ class SheetSyncService:
     @staticmethod
     def process_due_isolated(*, limit: int = 25) -> dict[str, int]:
         """Claim rows durably, then execute them outside request sessions."""
+        logger.info("Claiming jobs", extra={"event": "sheet_sync_claiming_jobs", "limit": limit})
         with SessionLocal() as db:
             job_ids = SheetSyncService._claim_due(db, limit=limit)
+        logger.info("Jobs found", extra={"event": "sheet_sync_jobs_found", "count": len(job_ids), "limit": limit})
         succeeded = 0
         failed = 0
         for job_id in job_ids:
+            logger.info("Processing job", extra={"event": "sheet_sync_processing_job", "job_id": str(job_id)})
             with SessionLocal() as db:
                 if SheetSyncService._execute_claimed(db, job_id):
                     succeeded += 1

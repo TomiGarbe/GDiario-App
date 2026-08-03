@@ -1,6 +1,5 @@
 const API_URL = "https://gdiario.azurewebsites.net/api";
-// Configure once in Apps Script Properties as SYNC_API_KEY. Never commit it.
-const SYNC_API_KEY = PropertiesService.getScriptProperties().getProperty("SYNC_API_KEY");
+const SYNC_API_KEY_PROPERTY = "SYNC_API_KEY";
 
 const MOVEMENT_TYPE_TO_BACKEND = {
   "compra": "compra",
@@ -18,13 +17,27 @@ const MOVEMENT_TYPE_TO_BACKEND = {
 };
 
 function syncToBackend() {
-  // The App database is authoritative. "Sync" from the spreadsheet now means
-  // refresh this projection from the App; it must never import sheet edits.
-  return syncFromBackendToSheet();
+  return syncMovementsToBackend();
 }
 
 function syncMovementsToBackend() {
-  return syncFromBackendToSheet();
+  try {
+    Logger.log("SYNC SHEETS -> APP iniciado");
+    const payloadFull = buildCurrentSheetFullPayload_();
+    const result = sendToBackend("/sync/full", payloadFull);
+    Logger.log(
+      "SYNC SHEETS -> APP finalizado. period_id=%s received=%s inserted=%s updated=%s deleted=%s",
+      result && result.period_id,
+      result && result.movements && result.movements.received,
+      result && result.movements && result.movements.inserted,
+      result && result.movements && result.movements.updated,
+      result && result.movements && result.movements.deleted
+    );
+    return result;
+  } catch (error) {
+    Logger.log("SYNC SHEETS -> APP error: " + (error && error.message ? error.message : error));
+    throw error;
+  }
 }
 
 function buildCurrentSheetFullPayload_() {
@@ -44,8 +57,9 @@ function buildCurrentSheetFullPayload_() {
 }
 
 function syncCatalogToBackend() {
-  Logger.log("SYNC catálogo omitido: la App es la fuente de verdad");
-  return { skipped: true, reason: "APP_IS_SOURCE_OF_TRUTH" };
+  // Keep a single inbound engine.  The old catalog-only endpoints could
+  // produce partial state and are intentionally not used anymore.
+  return syncMovementsToBackend();
 }
 
 function syncFromBackendToSheet() {
@@ -1142,14 +1156,18 @@ function getFromBackend(path) {
 }
 
 function requestBackend(method, path, payload) {
-  if (!SYNC_API_KEY) {
-    throw new Error("Falta configurar SYNC_API_KEY en Script Properties");
+  const syncApiKey = getSyncApiKey_();
+  if (!syncApiKey) {
+    throw new Error(
+      "Falta configurar SYNC_API_KEY en Script Properties. " +
+      "Un administrador debe ejecutar configurarSyncApiKey('clave-de-Azure') una sola vez."
+    );
   }
   const options = {
     method: method,
     contentType: "application/json",
     headers: {
-      "x-api-key": SYNC_API_KEY
+      "x-api-key": syncApiKey
     },
     muteHttpExceptions: true
   };
@@ -1176,6 +1194,29 @@ function requestBackend(method, path, payload) {
   } catch (error) {
     return body;
   }
+}
+
+/**
+ * One-time administrator setup. The value is stored only in the Apps Script
+ * project and is never committed with the Add-on source.
+ */
+function configurarSyncApiKey(apiKey) {
+  const value = String(apiKey == null ? "" : apiKey).trim();
+  if (!value) throw new Error("SYNC_API_KEY no puede estar vacía");
+  PropertiesService.getScriptProperties().setProperty(SYNC_API_KEY_PROPERTY, value);
+  Logger.log("SYNC_API_KEY configurada en Script Properties");
+  return { configured: true };
+}
+
+function borrarSyncApiKey() {
+  PropertiesService.getScriptProperties().deleteProperty(SYNC_API_KEY_PROPERTY);
+  Logger.log("SYNC_API_KEY eliminada de Script Properties");
+}
+
+function getSyncApiKey_() {
+  // Resolve on every execution: Apps Script can reuse globals between runs,
+  // while Script Properties is the authoritative configuration store.
+  return String(PropertiesService.getScriptProperties().getProperty(SYNC_API_KEY_PROPERTY) || "").trim();
 }
 
 function getPeriodPayload() {
