@@ -10,7 +10,7 @@ from sqlalchemy import Select, case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.db import get_db
-from app.core.security import get_current_user, require_admin_user
+from app.core.security import get_current_user
 from app.models.client import Client
 from app.models.movement import Movement, MovementType
 from app.models.movement_client_payment import MovementClientPayment
@@ -50,7 +50,6 @@ def _to_movement_out(movement: Movement) -> MovementOut:
         description=movement.description,
         updated_at=movement.updated_at,
         source=movement.source,
-        sheet_sync_status=movement.sheet_sync_status,
         items=[
             MovementItemOut(
                 client=item.client.name,
@@ -164,16 +163,6 @@ def create_movement(payload: MovementCreate, db: Session = Depends(get_db)) -> M
     except HTTPException:
         db.rollback()
         raise
-
-
-@router.post("/debug/test-sheets")
-def debug_test_sheets(
-    period_id: int = Query(..., ge=190001, le=299912),
-    _admin_user: str = Depends(require_admin_user),
-    db: Session = Depends(get_db),
-) -> dict[str, str]:
-    result = MovementService.test_sheets_for_period(db, period_id)
-    return {"result": result}
 
 
 @router.get("/flat", response_model=list[MovementFlatOut])

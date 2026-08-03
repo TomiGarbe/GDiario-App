@@ -1262,41 +1262,6 @@ select {
 }
 .mov-empty svg { width: 44px; height: 44px; stroke: var(--ink4); fill: none; stroke-width: 1.5; stroke-linecap: round; display: block; margin: 0 auto; }
 
-.admin-sheet-job {
-  cursor: pointer;
-}
-.admin-error-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border: 1px solid var(--bdr);
-  border-radius: var(--r-md);
-  background: var(--surf2);
-  padding: 12px;
-}
-.admin-error-detail-row {
-  display: grid;
-  grid-template-columns: minmax(92px, 34%) 1fr;
-  gap: 10px;
-  align-items: start;
-}
-.admin-error-detail-label {
-  color: var(--ink3);
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-.admin-error-detail-value {
-  color: var(--ink1);
-  font-size: 14px;
-  line-height: 1.4;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.admin-error-detail-value.multiline {
-  white-space: pre-wrap;
-}
-
 /* ================================================================
    GASTOS — AYUDANTES
 ================================================================ */

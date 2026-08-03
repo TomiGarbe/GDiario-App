@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-import logging
 from types import SimpleNamespace
-import unicodedata
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -17,19 +15,12 @@ from app.models.movement import Movement, MovementType
 from app.models.movement_client_payment import MovementClientPayment
 from app.models.movement_item import MovementItem
 from app.models.movement_salary import MovementSalary
-from app.models.period import Period
 from app.models.product import Product
 from app.schemas.movement import MovementCreate, MovementUpdate
-from app.services.google_sheets_writer import (
-    test_sheets,
-)
 from app.services.name_resolver import normalize_entity_name, resolve_or_create_entities
-from app.models.sheet_sync_job import SheetSyncAction
-from app.services.sheet_sync_service import SheetSyncService
 from app.services.validation_service import ValidationService
 
 TWOPLACES = Decimal("0.0001")
-logger = logging.getLogger(__name__)
 
 
 class MovementNotFoundError(Exception):
@@ -38,36 +29,10 @@ class MovementNotFoundError(Exception):
 
 class MovementService:
     @staticmethod
-    def _is_product_sheet_supported(product_name: str | None) -> bool:
-        text = str(product_name or "").strip().lower()
-        normalized = "".join(
-            char
-            for char in unicodedata.normalize("NFKD", text)
-            if not unicodedata.combining(char)
-        )
-        if normalized == "grasa":
-            return True
-        if "hueso" in normalized:
-            return True
-        if "aserrin" in normalized:
-            return True
-        return False
-
-    @staticmethod
     def _resolve_source(movement_type: MovementType) -> str:
         if movement_type == MovementType.ENTREGA_DINERO:
             return "app-entrega"
         return "app"
-
-    @staticmethod
-    def _extract_product_cells(movement: Movement) -> set[tuple]:
-        cells: set[tuple] = set()
-        for item in movement.items or []:
-            product_name = str(item.product.name or "").strip()
-            if not MovementService._is_product_sheet_supported(product_name):
-                continue
-            cells.add((movement.date, item.client.name, product_name))
-        return cells
 
     @staticmethod
     def _validate_no_duplicate_client_movement(
@@ -174,31 +139,9 @@ class MovementService:
         db.expire(movement, ["items", "salaries", "client_payments"])
         movement = MovementService.get_movement_by_id(db, movement.id)
 
-        sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
-        if sheet_id:
-            SheetSyncService.enqueue(
-                db,
-                movement=movement,
-                sheet_id=sheet_id,
-                action=SheetSyncAction.CREATE,
-            )
-        # The movement and its durable outbox row commit atomically.  Sheets is
-        # deliberately not contacted on this request.
         db.commit()
 
         return movement
-
-    @staticmethod
-    def test_sheets_for_period(db: Session, period_id: int) -> str:
-        sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
-        if not sheet_id:
-            db.rollback()
-            return f"ERROR: period_id={period_id} has no sheet_id"
-        # This diagnostic call talks to an external service. It must never
-        # retain the read transaction opened by _get_sheet_id_for_period_id.
-        db.commit()
-        test_sheets(sheet_id)
-        return f"OK: test_sheets executed for period_id={period_id} sheet_id={sheet_id}"
 
     @staticmethod
     def update_movement(db: Session, movement_id: UUID, data: MovementUpdate) -> Movement:
@@ -212,9 +155,6 @@ class MovementService:
         )
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
-        previous_period_id = movement.period_id
-        previous_product_cells = MovementService._extract_product_cells(movement)
-
         movement_type = MovementType(data.type)
         items, salaries, client_payments, amount = MovementService._prepare_payload(db, movement_type, data)
 
@@ -232,32 +172,6 @@ class MovementService:
         db.expire(movement, ["items", "salaries", "client_payments"])
         movement = MovementService.get_movement_by_id(db, movement.id)
 
-        previous_sheet_id = MovementService._get_sheet_id_for_period_id(db, previous_period_id)
-        new_sheet_id = MovementService._get_sheet_id_for_period_id(db, movement.period_id)
-        if previous_sheet_id and previous_sheet_id != new_sheet_id:
-            SheetSyncService.enqueue(
-                db,
-                movement=movement,
-                period_id=previous_period_id,
-                sheet_id=previous_sheet_id,
-                action=SheetSyncAction.DELETE,
-                payload={
-                    "previous_product_cells": MovementService._serialize_product_cells(previous_product_cells),
-                    "recalculate_period_id": previous_period_id,
-                },
-            )
-        if new_sheet_id:
-            SheetSyncService.enqueue(
-                db,
-                movement=movement,
-                sheet_id=new_sheet_id,
-                action=SheetSyncAction.UPDATE,
-                payload={
-                    "previous_product_cells": MovementService._serialize_product_cells(previous_product_cells)
-                    if previous_sheet_id == new_sheet_id
-                    else [],
-                },
-            )
         db.commit()
 
         return movement
@@ -276,24 +190,9 @@ class MovementService:
         )
         if movement is None:
             raise MovementNotFoundError(f"Movement with id '{movement_id}' was not found")
-        product_cells = MovementService._extract_product_cells(movement)
-        period_id = movement.period_id
         movement.deleted_at = datetime.now(timezone.utc)
         movement.updated_at = movement.deleted_at
         movement.source = MovementService._resolve_source(movement.type)
-        sheet_id = MovementService._get_sheet_id_for_period_id(db, period_id)
-        if sheet_id:
-            SheetSyncService.enqueue(
-                db,
-                movement=movement,
-                period_id=period_id,
-                sheet_id=sheet_id,
-                action=SheetSyncAction.DELETE,
-                payload={
-                    "previous_product_cells": MovementService._serialize_product_cells(product_cells),
-                    "recalculate_period_id": period_id,
-                },
-            )
         db.commit()
 
     @staticmethod
@@ -421,24 +320,3 @@ class MovementService:
         total_haber_dec = Decimal(total_haber).quantize(TWOPLACES)
         balance = (total_haber_dec - total_debe_dec).quantize(TWOPLACES)
         return total_debe_dec, total_haber_dec, balance
-
-    @staticmethod
-    def _get_sheet_id_for_period_id(db: Session, period_id: int) -> str | None:
-        year = period_id // 100
-        month = period_id % 100
-        period = db.scalar(
-            select(Period).where(
-                Period.year == year,
-                Period.month == month,
-            )
-        )
-        if period is None:
-            return None
-        return (period.sheet_id or "").strip() or None
-
-    @staticmethod
-    def _serialize_product_cells(cells: set[tuple] | None) -> list[list[str]]:
-        out: list[list[str]] = []
-        for movement_date, client_name, product_name in cells or set():
-            out.append([str(movement_date), str(client_name), str(product_name)])
-        return out

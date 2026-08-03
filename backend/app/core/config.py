@@ -20,8 +20,6 @@ class Settings:
     allowed_emails: tuple[str, ...]
     admin_emails: tuple[str, ...]
     sync_api_key: str
-    google_credentials_json: str
-    sheets_timeout_seconds: int
     company_name: str
     db_pool_size: int
     db_max_overflow: int
@@ -68,10 +66,6 @@ def get_settings() -> Settings:
     sync_api_key = os.getenv("SYNC_API_KEY", "").strip()
     if not sync_api_key:
         raise RuntimeError("SYNC_API_KEY is not set. Define it in backend/.env")
-    google_credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip()
-    sheets_timeout_seconds = int(os.getenv("SHEETS_TIMEOUT_SECONDS", "25"))
-    if sheets_timeout_seconds <= 0:
-        raise RuntimeError("SHEETS_TIMEOUT_SECONDS must be greater than zero")
     company_name = os.getenv("COMPANY_NAME", "No configurada").strip() or "No configurada"
 
     # These bounded defaults prevent a saturated or blocked database from
@@ -106,8 +100,6 @@ def get_settings() -> Settings:
         allowed_emails=allowed_emails,
         admin_emails=admin_emails,
         sync_api_key=sync_api_key,
-        google_credentials_json=google_credentials_json,
-        sheets_timeout_seconds=sheets_timeout_seconds,
         company_name=company_name,
         db_pool_size=db_pool_size,
         db_max_overflow=db_max_overflow,

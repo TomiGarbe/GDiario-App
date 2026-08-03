@@ -917,102 +917,12 @@ class SyncService:
 
     @staticmethod
     def _build_sync_full_movement_client_payment_row(movement, client_payment, client_id: UUID) -> dict:
-        normalized_client_name = normalize_entity_name(client_payment.client_name)
-        subtotal, subtotal_overridden = coerce_zero_if_special_client(normalized_client_name, client_payment.subtotal)
-        if es_cliente_sin_monto(normalized_client_name):
-            if subtotal_overridden:
-                SyncService._logger.warning(
-                    "Sync full client payment con subtotal > 0 para cliente sin monto. movement_id=%s client=%s subtotal=%s -> 0",
-                    movement.external_id,
-                    normalized_client_name,
-                    client_payment.subtotal,
-                )
         return {
             "movement_id": movement.external_id,
             "client_id": client_id,
-            "subtotal": subtotal,
+            # "Clientes sin monto" applies to prices and movement items, not
+            # to money received from a client. Coercing this value to zero
+            # caused valid client payments to be exported as 0.
+            "subtotal": client_payment.subtotal,
         }
-
-    @staticmethod
-    def export_full(db: Session, period_id: int) -> dict:
-        movements = (
-            db.execute(
-                select(Movement)
-                .options(
-                    selectinload(Movement.items).selectinload(MovementItem.client),
-                    selectinload(Movement.items).selectinload(MovementItem.product),
-                    selectinload(Movement.salaries).selectinload(MovementSalary.employee),
-                    selectinload(Movement.client_payments).selectinload(MovementClientPayment.client),
-                )
-                .where(Movement.period_id == period_id)
-                .where(Movement.deleted_at.is_(None))
-                .order_by(Movement.date.asc(), Movement.created_at.asc(), Movement.id.asc())
-            )
-            .scalars()
-            .all()
-        )
-
-        movement_rows = []
-        movement_item_rows = []
-        movement_salary_rows = []
-        movement_client_payment_rows = []
-
-        for movement in movements:
-            movement_rows.append(
-                {
-                    "id": movement.id,
-                    "period_id": movement.period_id,
-                    "date": movement.date,
-                    "type": movement.type.value if isinstance(movement.type, MovementType) else str(movement.type),
-                    "amount": movement.amount,
-                    "description": movement.description,
-                    "updated_at": movement.updated_at,
-                    "source": movement.source,
-                    "deleted_at": movement.deleted_at,
-                }
-            )
-
-            for item in movement.items:
-                movement_item_rows.append(
-                    {
-                        "id": item.id,
-                        "movement_id": item.movement_id,
-                        "client_name": item.client.name,
-                        "product_name": item.product.name,
-                        "quantity": item.quantity,
-                        "unit_price": item.unit_price,
-                        "subtotal": item.subtotal,
-                    }
-                )
-
-            for salary in movement.salaries:
-                movement_salary_rows.append(
-                    {
-                        "id": salary.id,
-                        "movement_id": salary.movement_id,
-                        "employee_name": salary.employee.name,
-                        "subtotal": salary.subtotal,
-                    }
-                )
-
-            for client_payment in movement.client_payments:
-                movement_client_payment_rows.append(
-                    {
-                        "id": client_payment.id,
-                        "movement_id": client_payment.movement_id,
-                        "client_name": client_payment.client.name,
-                        "subtotal": client_payment.subtotal,
-                    }
-                )
-
-        return {
-            "schema_version": "v2",
-            "movements": movement_rows,
-            "movement_items": movement_item_rows,
-            "movement_salaries": movement_salary_rows,
-            "movement_client_payments": movement_client_payment_rows,
-        }
-
-
-
 

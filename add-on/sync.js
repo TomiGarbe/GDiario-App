@@ -16,10 +16,6 @@ const MOVEMENT_TYPE_TO_BACKEND = {
   "entrega_dinero": "entrega_dinero"
 };
 
-function syncToBackend() {
-  return syncMovementsToBackend();
-}
-
 function syncMovementsToBackend() {
   try {
     Logger.log("SYNC SHEETS -> APP iniciado");
@@ -56,18 +52,12 @@ function buildCurrentSheetFullPayload_() {
   return payloadFull;
 }
 
-function syncCatalogToBackend() {
-  // Keep a single inbound engine.  The old catalog-only endpoints could
-  // produce partial state and are intentionally not used anymore.
-  return syncMovementsToBackend();
-}
-
 function syncFromBackendToSheet() {
   const period = getPeriodPayload();
   const periodId = Number(period.year) * 100 + Number(period.month);
   Logger.log("SYNC FROM BACKEND iniciado. period_id=" + periodId);
 
-  const exported = getFromBackend("/sync/full?period_id=" + encodeURIComponent(periodId));
+  const exported = getFromBackend("/sync/export?period_id=" + encodeURIComponent(periodId));
   const movements = Array.isArray(exported && exported.movements) ? exported.movements : [];
   const movementItems = Array.isArray(exported && exported.movement_items) ? exported.movement_items : [];
   const movementSalaries = Array.isArray(exported && exported.movement_salaries) ? exported.movement_salaries : [];
@@ -100,11 +90,21 @@ function syncFromBackendToSheet() {
     subtotal: syncNumber_(salary && salary.subtotal)
   })));
 
-  writeMovementClientPayments(movementClientPayments.map((payment) => ({
-    movement_id: payment && payment.movement_id,
-    client_name: syncSheetText_(payment && payment.client_name),
-    subtotal: syncNumber_(payment && payment.subtotal)
-  })));
+  writeMovementClientPayments(movementClientPayments.map((payment) => {
+    const amountPayload = payment && payment.subtotal;
+    const amountGoogle = syncNumber_(amountPayload);
+    Logger.log(
+      "CustomerPayment export payment_id=%s amount_payload=%s amount_google=%s",
+      payment && payment.id,
+      amountPayload,
+      amountGoogle
+    );
+    return {
+      movement_id: payment && payment.movement_id,
+      client_name: syncSheetText_(payment && payment.client_name),
+      subtotal: amountGoogle
+    };
+  }));
 
   syncOperationalSheetsFromExport({
     period: period,
@@ -157,7 +157,7 @@ function previewSyncBackendToSheet() {
 function getAppExportForCurrentPeriod_() {
   const period = getPeriodPayload();
   const periodId = Number(period.year) * 100 + Number(period.month);
-  return getFromBackend("/sync/full?period_id=" + encodeURIComponent(periodId)) || {};
+  return getFromBackend("/sync/export?period_id=" + encodeURIComponent(periodId)) || {};
 }
 
 function compareSyncSources_(sheetMovements, appMovements) {

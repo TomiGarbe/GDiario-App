@@ -61,13 +61,6 @@ class Movement(Base):
         nullable=False,
         server_default=text("'app'"),
     )
-    # This is the user-facing aggregate state of its durable Sheets outbox jobs.
-    sheet_sync_status: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default=text("'synced'"),
-        index=True,
-    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     items: Mapped[list["MovementItem"]] = relationship(

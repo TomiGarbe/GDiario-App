@@ -173,9 +173,6 @@ function enlazarBotonActualizarDatos() {
 function inicializarApp() {
   if (_appInicializada || _appInicializando) return;
   _appInicializando = true;
-  if (typeof actualizarAdminVisible === 'function') {
-    actualizarAdminVisible();
-  }
   enlazarBotonActualizarDatos();
   cargarDatosInicialesEnSegundoPlano();
 
@@ -231,10 +228,6 @@ function mostrar(v) {
   }
 
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  if (v === 'adm' && (typeof esUsuarioAdmin !== 'function' || !esUsuarioAdmin())) {
-    showToast('No autorizado', 'error');
-    v = 'mov';
-  }
   document.getElementById('sec-' + v).classList.add('active');
 
   document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
@@ -248,9 +241,6 @@ function mostrar(v) {
     });
   }
 
-  if (v === 'adm' && typeof cargarErroresSheetsAdmin === 'function') {
-    cargarErroresSheetsAdmin();
-  }
 }
 
 /* Cuando se abre un modal con formulario de edicion,

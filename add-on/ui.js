@@ -18,9 +18,8 @@ function homepage() {
     .addSection(
       CardService.newCardSection()
         .addWidget(btn("🔄 Reconstruir movimientos", "accionReconstruirMovimientos"))
-        .addWidget(btn("📊 Sync precios/clientes a app", "accionSyncCatalogoToBackend"))
-        .addWidget(btn("📤 Sync desde sheets a app", "accionSyncMovimientosToBackend"))
-        .addWidget(btn("📥 Sync desde app a sheets", "accionSyncFromBackend"))
+        .addWidget(btn("📤 Sincronizar hacia la App", "accionSyncMovimientosToBackend"))
+        .addWidget(btn("📥 Actualizar Google Sheets", "accionSyncFromBackend"))
     )
     .build();
 }
@@ -103,10 +102,6 @@ function accionReconstruirMovimientos() {
   }
 }
 
-function accionSyncToBackend() {
-  return accionSyncMovimientosToBackend();
-}
-
 function accionSyncMovimientosToBackend() {
   try {
     const preview = previewSyncSheetToBackend();
@@ -119,15 +114,6 @@ function accionSyncMovimientosToBackend() {
     }
     syncMovementsToBackend();
     return notificar("Sincronización Sheets → App completada");
-  } catch (e) {
-    return notificar(e && e.message ? e.message : String(e));
-  }
-}
-
-function accionSyncCatalogoToBackend() {
-  try {
-    syncCatalogToBackend();
-    return notificar("Precios, clientes y productos enviados a la app");
   } catch (e) {
     return notificar(e && e.message ? e.message : String(e));
   }
@@ -161,7 +147,7 @@ function accionSyncFromBackend() {
     }
     const result = syncFromBackendToSheet();
     return notificar(
-      "Sync desde app listo: " +
+      "Google Sheets actualizado: " +
       result.movements + " movs, " +
       result.movement_items + " items"
     );
@@ -187,7 +173,7 @@ function accionConfirmSyncFromBackend() {
   try {
     const result = syncFromBackendToSheet();
     return notificar(
-      "Sync desde app listo: " +
+      "Google Sheets actualizado: " +
       result.movements + " movs, " +
       result.movement_items + " items"
     );

@@ -99,7 +99,6 @@ class MovementOut(BaseModel):
     description: str | None
     updated_at: datetime
     source: str
-    sheet_sync_status: str
     items: list[MovementItemOut] = Field(default_factory=list)
     salaries: list[MovementSalaryOut] = Field(default_factory=list)
     client_payments: list[MovementClientPaymentOut] = Field(default_factory=list)
