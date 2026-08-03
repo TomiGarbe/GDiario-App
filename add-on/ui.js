@@ -18,7 +18,7 @@ function homepage() {
     .addSection(
       CardService.newCardSection()
         .addWidget(btn("🔄 Reconstruir movimientos", "accionReconstruirMovimientos"))
-        .addWidget(btn("📤 Sincronizar hacia la App", "accionSyncMovimientosToBackend"))
+        .addWidget(btn("📤 Actualizar App", "accionSyncMovimientosToBackend"))
         .addWidget(btn("📥 Actualizar Google Sheets", "accionSyncFromBackend"))
     )
     .build();
