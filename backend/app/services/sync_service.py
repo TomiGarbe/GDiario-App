@@ -120,6 +120,25 @@ class SyncService:
         return len(price_list), len(rows)
 
     @staticmethod
+    def sync_catalog(db: Session, prices: Iterable) -> dict[str, int]:
+        """Apply the PRECIOS snapshot as one catalog transaction."""
+        price_list = list(prices)
+        client_names = [item.client_name for item in price_list]
+        product_names = [item.product_name for item in price_list]
+        clients_received, clients_created, _ = SyncService.ensure_clients(db, client_names)
+        products_received, products_created, _ = SyncService.ensure_products(db, product_names)
+        prices_received, prices_upserted = SyncService.upsert_prices(db, price_list)
+
+        return {
+            "clients_received": clients_received,
+            "clients_created": clients_created,
+            "products_received": products_received,
+            "products_created": products_created,
+            "prices_received": prices_received,
+            "prices_upserted": prices_upserted,
+        }
+
+    @staticmethod
     def sync_movements(db: Session, movements: Iterable) -> tuple[int, int, int]:
         movement_list = list(movements)
         if not movement_list:

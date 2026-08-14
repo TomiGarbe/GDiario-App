@@ -232,6 +232,21 @@ class SyncPricesResponse(BaseModel):
     upserted: int
 
 
+class SyncCatalogRequest(BaseModel):
+    """Catalog snapshot read from the PRECIOS sheet."""
+
+    prices: list[SyncPricePayload] = Field(default_factory=list)
+
+
+class SyncCatalogResponse(BaseModel):
+    clients_received: int
+    clients_created: int
+    products_received: int
+    products_created: int
+    prices_received: int
+    prices_upserted: int
+
+
 class SyncMovementDetailByIdPayload(BaseModel):
     type: Literal["producto", "empleado", "gasto"]
     product_id: UUID | None = None

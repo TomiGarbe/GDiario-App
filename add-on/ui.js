@@ -21,6 +21,10 @@ function homepage() {
         .addWidget(btn("📤 Actualizar App", "accionSyncMovimientosToBackend"))
         .addWidget(btn("📥 Actualizar Google Sheets", "accionSyncFromBackend"))
     )
+    .addSection(
+      CardService.newCardSection()
+        .addWidget(btn("Actualizar clientes y precios", "accionSyncCatalogoToBackend"))
+    )
     .build();
 }
 
@@ -114,6 +118,19 @@ function accionSyncMovimientosToBackend() {
     }
     syncMovementsToBackend();
     return notificar("Sincronización Sheets → App completada");
+  } catch (e) {
+    return notificar(e && e.message ? e.message : String(e));
+  }
+}
+
+function accionSyncCatalogoToBackend() {
+  try {
+    const result = syncCatalogToBackend() || {};
+    return notificar(
+      "Catalogo actualizado: " + (result.prices_upserted || 0) +
+      " precios, " + (result.clients_created || 0) +
+      " clientes nuevos y " + (result.products_created || 0) + " productos nuevos"
+    );
   } catch (e) {
     return notificar(e && e.message ? e.message : String(e));
   }

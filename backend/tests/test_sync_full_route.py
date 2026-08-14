@@ -15,7 +15,7 @@ os.environ.setdefault("ALLOWED_EMAILS", "test@example.com")
 os.environ.setdefault("SYNC_API_KEY", "test")
 
 from app.api.routes import sync
-from app.schemas.sync import SyncFullRequest
+from app.schemas.sync import SyncCatalogRequest, SyncFullRequest
 from app.services.export_service import ExportService
 from app.services.sync_service import SyncService
 
@@ -23,6 +23,36 @@ from app.services.sync_service import SyncService
 class FakeSession:
     def begin(self):
         return nullcontext()
+
+
+def test_catalog_endpoint_uses_the_prices_snapshot(monkeypatch) -> None:
+    payload = SyncCatalogRequest.model_validate(
+        {
+            "prices": [
+                {
+                    "client_name": "Scurti",
+                    "product_name": "Grasa",
+                    "price": "1250.50",
+                    "start_date": "2026-08-01",
+                }
+            ]
+        }
+    )
+    expected = {
+        "clients_received": 1,
+        "clients_created": 1,
+        "products_received": 1,
+        "products_created": 1,
+        "prices_received": 1,
+        "prices_upserted": 1,
+    }
+    monkeypatch.setattr(SyncService, "sync_catalog", lambda **kwargs: expected)
+
+    result = sync.sync_catalog(payload, FakeSession())
+
+    assert result.clients_created == 1
+    assert result.products_created == 1
+    assert result.prices_upserted == 1
 
 
 def test_full_snapshot_endpoint_uses_the_enabled_sync_engine(monkeypatch) -> None:

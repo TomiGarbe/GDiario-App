@@ -36,6 +36,26 @@ function syncMovementsToBackend() {
   }
 }
 
+function syncCatalogToBackend() {
+  const pricesRows = getSheetData("PRECIOS");
+  const payload = buildPrices(pricesRows);
+  validatePricesPayload(payload);
+
+  if (!payload.prices.length) {
+    throw new Error("La hoja PRECIOS no tiene filas validas para actualizar");
+  }
+
+  Logger.log("SYNC CATALOGO iniciado. prices=" + payload.prices.length);
+  const result = sendToBackend("/sync/catalog", payload);
+  Logger.log(
+    "SYNC CATALOGO finalizado. clients_created=%s products_created=%s prices_upserted=%s",
+    result && result.clients_created,
+    result && result.products_created,
+    result && result.prices_upserted
+  );
+  return result;
+}
+
 function buildCurrentSheetFullPayload_() {
   const movementsRows = getSheetData("MOVEMENTS");
   const itemsRows = getSheetData("ITEMS");

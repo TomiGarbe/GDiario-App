@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.sync_auth import verify_sync_key
 from app.schemas.sync import (
+    SyncCatalogRequest,
+    SyncCatalogResponse,
     SyncFullRequest,
     SyncFullExportResponse,
     SyncFullResponse,
@@ -19,6 +21,19 @@ router = APIRouter(
     tags=["sync"],
     dependencies=[Depends(verify_sync_key)],
 )
+
+
+@router.post("/catalog", response_model=SyncCatalogResponse, status_code=status.HTTP_200_OK)
+def sync_catalog(data: SyncCatalogRequest, db: Session = Depends(get_db)) -> SyncCatalogResponse:
+    """Update the app catalog from the spreadsheet's PRECIOS sheet."""
+    try:
+        with db.begin():
+            result = SyncService.sync_catalog(db=db, prices=data.prices)
+        return SyncCatalogResponse(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Integrity error syncing catalog") from exc
 
 @router.post("/full", response_model=SyncFullResponse, status_code=status.HTTP_200_OK)
 def sync_full(data: SyncFullRequest, db: Session = Depends(get_db)) -> SyncFullResponse:
