@@ -17,13 +17,10 @@ function homepage() {
     )
     .addSection(
       CardService.newCardSection()
+        .addWidget(btn("📊 Actualizar clientes y precios", "accionSyncCatalogoToBackend"))
         .addWidget(btn("🔄 Reconstruir movimientos", "accionReconstruirMovimientos"))
         .addWidget(btn("📤 Actualizar App", "accionSyncMovimientosToBackend"))
         .addWidget(btn("📥 Actualizar Google Sheets", "accionSyncFromBackend"))
-    )
-    .addSection(
-      CardService.newCardSection()
-        .addWidget(btn("Actualizar clientes y precios", "accionSyncCatalogoToBackend"))
     )
     .build();
 }
