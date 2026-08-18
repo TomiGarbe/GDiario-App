@@ -18,7 +18,7 @@ function autorizarTodo() {
   result.active_user_email = Session.getActiveUser().getEmail() || "";
   result.trigger_count = ScriptApp.getProjectTriggers().length;
 
-  const response = UrlFetchApp.fetch("https://gdiario.azurewebsites.net/", {
+  const response = UrlFetchApp.fetch("https://gdiario-api.botly.com.ar/", {
     method: "get",
     muteHttpExceptions: true
   });

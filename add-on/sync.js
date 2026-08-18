@@ -1,4 +1,4 @@
-const API_URL = "https://gdiario.azurewebsites.net/api";
+const API_URL = "https://gdiario-api.botly.com.ar/api";
 const SYNC_API_KEY_PROPERTY = "SYNC_API_KEY";
 
 const MOVEMENT_TYPE_TO_BACKEND = {

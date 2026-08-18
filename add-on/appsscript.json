@@ -11,8 +11,8 @@
   "urlFetchWhitelist": [
     "https://script.google.com/*",
     "https://script.googleapis.com/*",
-    "https://gdiario.azurewebsites.net/",
-    "https://gdiario.azurewebsites.net/api/*"
+    "https://gdiario-api.botly.com.ar/",
+    "https://gdiario-api.botly.com.ar/api/*"
   ],
   "addOns": {
     "common": {
