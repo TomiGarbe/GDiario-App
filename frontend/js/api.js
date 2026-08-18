@@ -1,5 +1,5 @@
 const API_URL = String(
-  window.API_URL || window.NEXT_PUBLIC_API_URL || "https://gdiario.azurewebsites.net"
+  window.API_URL || window.NEXT_PUBLIC_API_URL || "https://gdiario-api.botly.com.ar"
 ).trim().replace(/\/$/, "");
 const API_BASE_URL = API_URL + "/api";
 var API_REQUEST_TIMEOUT_MS = 25000;
