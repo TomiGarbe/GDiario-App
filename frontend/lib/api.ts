@@ -1,6 +1,6 @@
 import type { ApiErrorPayload } from "../types/api";
 
-const API_URL = (import.meta.env.VITE_API_URL || "https://gdiario.azurewebsites.net")
+const API_URL = (import.meta.env.VITE_API_URL || "https://gdiario-api.botly.com.ar")
   .trim()
   .replace(/\/$/, "");
 const API_BASE_URL = `${API_URL}/api`;
